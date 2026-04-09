@@ -46,6 +46,10 @@ composer require kode/event
 - [批量事件](#批量事件)
 - [事件管道](#事件管道)
 - [生命周期钩子](#生命周期钩子)
+- [不可变事件](#不可变事件)
+- [事件重放](#事件重放)
+- [事件中间件](#事件中间件)
+- [事件验证](#事件验证)
 - [异步队列](#异步队列)
 - [协程安全](#协程安全)
 - [AOP 切面](#aop-切面)
@@ -838,6 +842,147 @@ $hooks->clear('before'); // 仅清空 before
 $hooks->clear();         // 清空所有
 ```
 
+## 不可变事件
+
+使用 PHP 8.1 readonly 属性的不可变事件对象。
+
+```php
+use Kode\Event\ImmutableEvent;
+
+$event = ImmutableEvent::create('user.created', ['name' => 'test']);
+
+// 只读属性
+$event->name;        // 'user.created'
+$event->data;        // ['name' => 'test']
+$event->propagationStopped; // false
+
+// 创建新实例（不修改原对象）
+$newEvent = $event->with('age', 25);
+$newEvent = $event->withData(['extra' => 'data']);
+$newEvent = $event->withStopped();
+
+// 从普通事件转换
+$immutable = ImmutableEvent::fromEvent($event);
+```
+
+## 事件重放
+
+记录和重放事件序列。
+
+```php
+use Kode\Event\EventReplay;
+
+$dispatcher = new Dispatcher();
+$replay = new EventReplay($dispatcher);
+
+// 记录事件
+$replay->record(new Event('user.created', ['id' => 1]));
+$replay->record(new Event('user.updated', ['id' => 1]));
+
+// 重放所有
+$replay->replay();
+
+// 重放指定范围
+$replay->replay(from: 0, count: 5);
+
+// 反向重放
+$replay->replayReverse();
+
+// 重放直到特定事件
+$replay->replayUntil('user.deleted');
+
+// 条件重放
+$replay->replayIf(fn($e) => $e->has('id'));
+
+// 导出/导入
+$exported = $replay->export();
+$imported = EventReplay::import($exported);
+```
+
+## 事件中间件
+
+在事件派发过程中插入中间件处理。
+
+```php
+use Kode\Event\EventMiddleware;
+use Kode\Event\LoggingMiddleware;
+use Kode\Event\ValidationMiddleware;
+
+$middleware = new EventMiddleware();
+
+// 添加中间件
+$middleware->add(function ($event, $next) {
+    echo "前置处理\n";
+    $result = $next($event);
+    echo "后置处理\n";
+    return $result;
+}, priority: 10);
+
+// 处理事件
+$middleware->process($event, fn($e) => $dispatcher->dispatch($e));
+```
+
+### 日志中间件
+
+```php
+$logging = new LoggingMiddleware();
+$logging->handle($event, fn($e) => $dispatcher->dispatch($e));
+```
+
+### 验证中间件
+
+```php
+$validation = new ValidationMiddleware();
+
+$validation->addRule('user.created', fn($e) => $e->has('user_id'));
+$validation->addRule('user.created', fn($e) => is_int($e->get('user_id')));
+
+$validation->handle($event, fn($e) => $dispatcher->dispatch($e));
+```
+
+## 事件验证
+
+使用 Schema 定义和验证事件结构。
+
+```php
+use Kode\Event\EventSchema;
+use Kode\Event\EventSchemaRegistry;
+
+$schema = EventSchema::create('user.created')
+    ->required('user_id', 'int')
+    ->required('name', 'string')
+    ->optional('email', 'string')
+    ->validate(fn($e) => $e->get('user_id') > 0);
+
+$event = new Event('user.created', [
+    'user_id' => 123,
+    'name' => '张三',
+]);
+
+if ($schema->validateEvent($event)) {
+    $dispatcher->dispatch($event);
+}
+```
+
+### Schema 注册表
+
+```php
+$registry = new EventSchemaRegistry();
+
+$registry->register(EventSchema::create('user.created')
+    ->required('user_id', 'int'));
+
+$registry->register(EventSchema::create('order.paid')
+    ->required('order_id', 'int')
+    ->required('amount', 'numeric'));
+
+// 验证事件
+$registry->validate($event);
+
+// 批量验证
+$registry->validateMany([$event1, $event2]);
+```
+
 ## 事件名称常量
 
 ```php
@@ -1163,10 +1308,14 @@ src/
 ├── EventHooks.php                  # 生命周期钩子
 ├── EventInterceptorInterface.php   # 拦截器接口
 ├── EventListenerTrait.php         # 监听器特性
+├── EventMiddleware.php            # 事件中间件
 ├── EventNames.php                 # 事件名称常量
 ├── EventPipeline.php              # 事件管道
 ├── EventPriority.php              # 事件优先级枚举
+├── EventReplay.php               # 事件重放
+├── EventSchema.php               # 事件验证
 ├── EventTracer.php                # 事件追踪器
+├── ImmutableEvent.php            # 不可变事件
 ├── InterceptorRegistry.php        # 拦截器注册表
 ├── ListenerInterface.php          # 监听器接口
 ├── Php85Features.php              # PHP 8.5 特性
