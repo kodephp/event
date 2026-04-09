@@ -1,0 +1,27 @@
+# 忽略文件
+
+#Trae IDE
+.trae/
+
+#Composer
+/vendor/
+composer.lock
+
+#PHP
+*.php~
+*.log
+.phpunit.result.cache
+phpunit.xml
+
+#IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+#OS
+.DS_Store
+Thumbs.db
+
+# 测试覆盖率
+/coverage/

@@ -1,0 +1,41 @@
+{
+    "name": "kode/event",
+    "description": "轻量级解耦事件编排库，支持事件派发、监听、订阅、异步事件、协程安全，可结合 kode/aop 做切面事件",
+    "type": "library",
+    "license": "Apache-2.0",
+    "keywords": [
+        "event",
+        "dispatch",
+        "subscribe",
+        "async",
+        "coroutine",
+        "aspect-oriented"
+    ],
+    "version": "1.0.0",
+    "authors": [
+        {
+            "name": "KodePHP Team"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "kode/context": "^2.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kode\\Event\\": "src/"
+        }
+    },
+    "suggest": {
+        "kode/queue": "异步事件队列支持",
+        "kode/aop": "AOP 切面事件处理",
+        "kode/runtime": "统一协程运行时",
+        "kode/fibers": "基于 Fiber 的并发",
+        "kode/di": "依赖注入支持",
+        "kode/facade": "门面模式支持",
+        "kode/parallel": "并行事件处理"
+    }
+}
