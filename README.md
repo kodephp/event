@@ -39,6 +39,13 @@ composer require kode/event
 - [异常和验证](#异常和验证)
 - [PHP 8.5 特性](#php-85-特性)
 - [事件助手](#事件助手)
+- [事件冒泡](#事件冒泡)
+- [事件过滤器](#事件过滤器)
+- [延迟派发](#延迟派发)
+- [事件追踪](#事件追踪)
+- [批量事件](#批量事件)
+- [事件管道](#事件管道)
+- [生命周期钩子](#生命周期钩子)
 - [异步队列](#异步队列)
 - [协程安全](#协程安全)
 - [AOP 切面](#aop-切面)
@@ -571,6 +578,266 @@ $features['readonly'];   // true (PHP 8.1+)
 $features['pipe_operator'];  // false (PHP 8.5+)
 ```
 
+## 事件冒泡
+
+子事件自动冒泡到父事件。
+
+```php
+use Kode\Event\EventBubbles;
+
+$dispatcher = new Dispatcher();
+$bubbles = new EventBubbles($dispatcher);
+
+// 注册父子关系：user.created -> user.activity
+$bubbles->registerParent('user.created', 'user.activity');
+$bubbles->registerParent('user.updated', 'user.activity');
+
+$dispatcher->listen('user.activity', function (Event $e) {
+    echo "用户活动事件: {$e->getName()}\n";
+});
+
+$bubbles->bubble(new Event('user.created'));
+// 输出: 用户活动事件: user.activity
+```
+
+### 批量注册
+
+```php
+$bubbles->registerParents([
+    'user.created' => 'user.activity',
+    'user.updated' => 'user.activity',
+    'user.deleted' => 'user.activity',
+]);
+```
+
+### 启用/禁用
+
+```php
+$bubbles->disable();
+$bubbles->enable();
+$bubbles->isEnabled(); // false
+```
+
+## 事件过滤器
+
+在事件派发前修改事件数据。
+
+```php
+use Kode\Event\EventFilter;
+
+$filter = new EventFilter();
+
+$filter->add('user.created', function (Event $event) {
+    $event->set('name', strtoupper($event->get('name')));
+    $event->set('filtered', true);
+    return $event;
+}, priority: 10);
+
+$event = new Event('user.created', ['name' => 'test']);
+$filtered = $filter->filter($event);
+
+echo $filtered->get('name'); // TEST
+echo $filtered->get('filtered'); // true
+```
+
+### 移除过滤器
+
+```php
+$myFilter = function (Event $event) { return $event; };
+$filter->add('test', $myFilter);
+$filter->remove('test', $myFilter);
+```
+
+## 延迟派发
+
+延迟一段时间后派发事件。
+
+```php
+use Kode\Event\DeferredDispatcher;
+
+$dispatcher = new Dispatcher();
+$deferred = new DeferredDispatcher($dispatcher);
+
+// 延迟 5 秒派发
+$jobId = $deferred->defer('user.created', ['name' => '张三'], delay: 5);
+
+// 取消延迟事件
+$deferred->cancel($jobId);
+
+// 处理到期的延迟事件
+$deferred->process();
+
+// 处理所有延迟事件
+$deferred->processAll();
+
+// 检查待处理数量
+$deferred->count();
+```
+
+## 事件追踪
+
+追踪事件派发的性能和时间。
+
+```php
+use Kode\Event\EventTracer;
+
+$tracer = new EventTracer($dispatcher);
+$tracer->enable();
+
+$event = new Event('user.created', ['data' => 'value']);
+
+$tracer->trace($event, function () use ($event, $dispatcher) {
+    $dispatcher->dispatch($event);
+});
+
+// 获取追踪信息
+$trace = $tracer->getRecentTraces(1)[0];
+$trace['event'];        // 'user.created'
+$trace['duration'];     // 纳秒
+$trace['listenerCount']; // 监听器数量
+$trace['data'];         // ['data' => 'value']
+
+// 获取所有追踪
+$tracer->getAllTraces();
+
+// 清空追踪记录
+$tracer->clear();
+```
+
+## 批量事件
+
+批量构建和派发事件。
+
+```php
+use Kode\Event\BatchEventBuilder;
+
+$dispatcher = new Dispatcher();
+$batch = BatchEventBuilder::batch($dispatcher);
+
+// 批量派发
+$batch->create('user.created')
+      ->create('user.updated')
+      ->create('order.created')
+      ->dispatch();
+
+// 带前缀后缀
+$batch->prefix('app.')
+      ->suffix('.event')
+      ->create('start')
+      ->create('stop')
+      ->dispatch();
+
+// 带默认数据
+$batch->defaults(['source' => 'batch', 'timestamp' => time()])
+      ->with('user.created', ['name' => 'test'])
+      ->dispatch();
+
+// 仅构建不派发
+$events = $batch->create('user.created')
+                ->create('user.updated')
+                ->build();
+```
+
+## 事件管道
+
+链式变换事件数据，支持 PHP 8.5 管道操作符。
+
+```php
+use Kode\Event\EventPipeline;
+
+$event = new Event('user.created', ['name' => 'test']);
+$pipeline = EventPipeline::create($event);
+
+$result = $pipeline
+    ->pipe(fn($e) => $e->set('piped', true))
+    ->pipe(fn($e) => $e->set('step', 1))
+    ->execute();
+```
+
+### 过滤器
+
+```php
+$pipeline->filter(fn($e) => $e->get('value') > 0)
+        ->pipe(fn($e) => $e->set('passed', true));
+```
+
+### 变换映射
+
+```php
+$pipeline->map(fn($e) => $e->set('mapped', true));
+```
+
+### 调试
+
+```php
+$pipeline->tap(fn($e) => var_dump($e->getData()));
+```
+
+### 停止管道
+
+```php
+$pipeline->stop();
+```
+
+### 链式执行回调
+
+```php
+$result = $pipeline
+    ->pipe(fn($e) => $e->set('done', true))
+    ->then(fn($e) => $e->get('value') * 2);
+```
+
+### 直接派发
+
+```php
+$pipeline->pipe(fn($e) => $e->set('enhanced', true))
+         ->dispatch($dispatcher);
+```
+
+## 生命周期钩子
+
+在事件派发的各个阶段插入自定义逻辑。
+
+```php
+use Kode\Event\EventHooks;
+
+$hooks = new EventHooks();
+
+$hooks->before(function (Event $event) {
+    $event->set('before_dispatch', time());
+    return $event;
+}, priority: 100);
+
+$hooks->after(function (Event $event) {
+    echo "事件已派发: {$event->getName()}\n";
+});
+
+$hooks->error(function (Event $event, \Throwable $e) {
+    echo "派发错误: {$e->getMessage()}\n";
+});
+
+// 触发钩子
+$event = new Event('test');
+$event = $hooks->triggerBefore($event);
+$dispatcher->dispatch($event);
+$hooks->triggerAfter($event);
+```
+
+### 移除钩子
+
+```php
+$myHook = function (Event $event) { return $event; };
+$hooks->before($myHook);
+$hooks->removeBefore($myHook);
+```
+
+### 清空钩子
+
+```php
+$hooks->clear('before'); // 仅清空 before
+$hooks->clear();         // 清空所有
+```
+
 ## 事件名称常量
 
 ```php
@@ -841,6 +1108,35 @@ $runtime->close();
 | `safeCall(callable $callback, $default)` | 安全调用 |
 | `safeExecuteListener($listener, Event $event)` | 安全执行监听器 |
 
+### EventPipeline
+
+| 方法 | 说明 |
+|------|------|
+| `create(Event $event)` | 创建管道 |
+| `pipe(callable $transform)` | 添加变换步骤 |
+| `filter(callable $predicate)` | 添加过滤条件 |
+| `map(callable $mapper)` | 添加映射变换 |
+| `tap(callable $callback)` | 添加调试回调 |
+| `stop()` | 停止管道 |
+| `execute()` | 执行管道 |
+| `then(callable $callback)` | 执行并回调 |
+| `dispatch(Dispatcher $dispatcher)` | 执行并派发 |
+
+### EventHooks
+
+| 方法 | 说明 |
+|------|------|
+| `before(callable $hook, int $priority)` | 添加前置钩子 |
+| `after(callable $hook, int $priority)` | 添加后置钩子 |
+| `error(callable $hook, int $priority)` | 添加错误钩子 |
+| `removeBefore(callable $hook)` | 移除前置钩子 |
+| `removeAfter(callable $hook)` | 移除后置钩子 |
+| `removeError(callable $hook)` | 移除错误钩子 |
+| `triggerBefore(Event $event)` | 触发前置钩子 |
+| `triggerAfter(Event $event)` | 触发后置钩子 |
+| `triggerError(Event $event, Throwable $e)` | 触发错误钩子 |
+| `clear(?string $type)` | 清空钩子 |
+
 ## 项目结构
 
 ```
@@ -855,15 +1151,22 @@ src/
 ├── AbstractEvent.php               # 抽象事件类
 ├── AbstractListener.php            # 监听器抽象类
 ├── AttributeListenerRegistry.php   # 属性监听器注册器
+├── BatchEventBuilder.php           # 批量事件构建器
+├── DeferredDispatcher.php          # 延迟派发调度器
 ├── Dispatcher.php                   # 事件调度器
+├── EventBubbles.php                # 事件冒泡
 ├── EventBuilder.php                # 事件构建器
 ├── EventDispatcherTrait.php       # 事件调度特性
+├── EventFilter.php                 # 事件过滤器
 ├── EventGroup.php                  # 事件组
 ├── EventHelper.php                 # 事件助手
+├── EventHooks.php                  # 生命周期钩子
 ├── EventInterceptorInterface.php   # 拦截器接口
 ├── EventListenerTrait.php         # 监听器特性
 ├── EventNames.php                 # 事件名称常量
+├── EventPipeline.php              # 事件管道
 ├── EventPriority.php              # 事件优先级枚举
+├── EventTracer.php                # 事件追踪器
 ├── InterceptorRegistry.php        # 拦截器注册表
 ├── ListenerInterface.php          # 监听器接口
 ├── Php85Features.php              # PHP 8.5 特性
