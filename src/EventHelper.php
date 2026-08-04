@@ -95,18 +95,15 @@ final class EventHelper
     /**
      * 检查是否匹配通配符模式
      *
+     * `*` 匹配任意数量字符，`?` 匹配单个字符。
+     * 正则编译结果由 {@see ListenerRegistry::compilePattern()} 统一缓存复用。
+     *
      * @param string $name 事件名称
      * @param string $pattern 通配符模式（如 user.* 或 *.created）
      */
     public static function matchesPattern(string $name, string $pattern): bool
     {
-        $regex = str_replace(
-            ['\\*', '\\?'],
-            ['.*', '.?'],
-            preg_quote($pattern, '/')
-        );
-
-        return (bool) preg_match('/^' . $regex . '$/', $name);
+        return (bool) preg_match(ListenerRegistry::compilePattern($pattern), $name);
     }
 
     /**

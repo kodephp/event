@@ -4,132 +4,138 @@ declare(strict_types=1);
 
 namespace Kode\Event;
 
-interface EventMiddlewareInterface
-{
-    public function handle(Event $event, callable $next): mixed;
-}
-
+/**
+ * 事件中间件管道
+ *
+ * 以洋葱模型组织中间件，按优先级从高到低依次包裹核心处理器。
+ * 优先级相同的中间件按添加顺序执行（稳定排序）。
+ */
 class EventMiddleware
 {
+    /**
+     * 中间件列表
+     *
+     * @var array<array{middleware: callable|EventMiddlewareInterface, priority: int, seq: int}>
+     */
     protected array $middlewares = [];
 
+    /**
+     * 自增序列号，用于保证同优先级下的稳定排序
+     */
+    protected int $sequence = 0;
+
+    /**
+     * 添加中间件
+     *
+     * @param callable|EventMiddlewareInterface $middleware 中间件
+     * @param int $priority 优先级，数值越大越靠外层
+     * @return $this
+     */
     public function add(callable|EventMiddlewareInterface $middleware, int $priority = 0): self
     {
         $this->middlewares[] = [
             'middleware' => $middleware,
             'priority' => $priority,
+            'seq' => $this->sequence++,
         ];
         $this->sort();
         return $this;
     }
 
+    /**
+     * 移除中间件
+     *
+     * @param callable|EventMiddlewareInterface $middleware 中间件
+     * @return $this
+     */
     public function remove(callable|EventMiddlewareInterface $middleware): self
     {
         $this->middlewares = array_values(
             array_filter(
                 $this->middlewares,
-                fn($item) => $item['middleware'] !== $middleware
+                fn(array $item): bool => $item['middleware'] !== $middleware
             )
         );
         return $this;
     }
 
+    /**
+     * 执行中间件管道
+     *
+     * @param Event $event 事件对象
+     * @param callable $handler 核心处理器
+     * @return mixed 处理结果
+     */
     public function process(Event $event, callable $handler): mixed
     {
-        if (empty($this->middlewares)) {
+        if ($this->middlewares === []) {
             return $handler($event);
         }
 
-        $middlewareStack = $this->buildStack($handler);
-        return $middlewareStack($event);
+        return ($this->buildStack($handler))($event);
     }
 
+    /**
+     * 构建中间件调用栈
+     */
     protected function buildStack(callable $handler): callable
     {
         $stack = $handler;
 
         for ($i = count($this->middlewares) - 1; $i >= 0; $i--) {
             $middleware = $this->middlewares[$i]['middleware'];
-            $currentStack = $stack;
+            $next = $stack;
 
-            $stack = function (Event $event) use ($middleware, $currentStack) {
+            $stack = static function (Event $event) use ($middleware, $next): mixed {
                 if ($middleware instanceof EventMiddlewareInterface) {
-                    return $middleware->handle($event, $currentStack);
+                    return $middleware->handle($event, $next);
                 }
 
-                if (is_callable($middleware)) {
-                    return $middleware($event, $currentStack);
-                }
-
-                return $currentStack($event);
+                return $middleware($event, $next);
             };
         }
 
         return $stack;
     }
 
+    /**
+     * 按优先级稳定排序（优先级降序，同级按添加顺序）
+     */
     protected function sort(): void
     {
-        usort($this->middlewares, fn($a, $b) => $b['priority'] <=> $a['priority']);
+        usort(
+            $this->middlewares,
+            static fn(array $a, array $b): int => $b['priority'] <=> $a['priority']
+                ?: $a['seq'] <=> $b['seq']
+        );
     }
 
+    /**
+     * 清空所有中间件
+     *
+     * @return $this
+     */
     public function clear(): self
     {
         $this->middlewares = [];
         return $this;
     }
 
+    /**
+     * 获取中间件数量
+     */
     public function count(): int
     {
         return count($this->middlewares);
     }
 
+    /**
+     * 获取所有中间件
+     *
+     * @return array<array{middleware: callable|EventMiddlewareInterface, priority: int, seq: int}>
+     */
     public function all(): array
     {
         return $this->middlewares;
-    }
-}
-
-class LoggingMiddleware implements EventMiddlewareInterface
-{
-    public function handle(Event $event, callable $next): mixed
-    {
-        $start = hrtime(true);
-        $name = $event->getName();
-
-        echo "📤 派发事件: {$name}\n";
-
-        $result = $next($event);
-
-        $elapsed = hrtime(true) - $start;
-        echo "✅ 事件完成: {$name} (耗时: {$elapsed}ns)\n";
-
-        return $result;
-    }
-}
-
-class ValidationMiddleware implements EventMiddlewareInterface
-{
-    protected array $rules = [];
-
-    public function addRule(string $eventName, callable $validator): self
-    {
-        $this->rules[$eventName][] = $validator;
-        return $this;
-    }
-
-    public function handle(Event $event, callable $next): mixed
-    {
-        $name = $event->getName();
-
-        if (isset($this->rules[$name])) {
-            foreach ($this->rules[$name] as $validator) {
-                if (!$validator($event)) {
-                    throw new \RuntimeException("事件 {$name} 验证失败");
-                }
-            }
-        }
-
-        return $next($event);
     }
 }

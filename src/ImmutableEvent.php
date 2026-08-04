@@ -4,9 +4,17 @@ declare(strict_types=1);
 
 namespace Kode\Event;
 
+use Psr\EventDispatcher\StoppableEventInterface as PsrStoppableEventInterface;
 use Stringable;
 
-class ImmutableEvent implements Stringable
+/**
+ * 不可变事件
+ *
+ * 基于 readonly 属性的值对象式事件，任何「修改」都会返回新实例。
+ * 实现 {@see NamedEventInterface} 与 PSR-14 {@see PsrStoppableEventInterface}，
+ * 可直接被调度器按事件名路由。
+ */
+class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface, Stringable
 {
     public readonly string $name;
 

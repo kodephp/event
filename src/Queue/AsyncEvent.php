@@ -153,8 +153,8 @@ class AsyncEvent extends Event
         array $data = [],
         int $delay = 0,
         ?string $queue = null
-    ): self {
-        return new self($name, $data, $delay, $queue);
+    ): static {
+        return new static($name, $data, $delay, $queue);
     }
 
     /**

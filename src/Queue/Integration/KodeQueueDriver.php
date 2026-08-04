@@ -2,120 +2,102 @@
 
 declare(strict_types=1);
 
-namespace Kode\Event\Queue;
+namespace Kode\Event\Queue\Integration;
 
-if (class_exists('Kode\Queue\Factory')) {
+use Kode\Event\Queue\QueueDriverInterface;
+use RuntimeException;
+
+/**
+ * kode/queue 驱动器实现
+ *
+ * 将事件投递到 kode/queue 队列中。
+ *
+ * 说明：早期版本在文件内使用 if/else 条件声明两个同名类，
+ * 既违反 PSR-4（命名空间与目录不符，会被 Composer 优化自动加载跳过），
+ * 也让「依赖是否安装」的判断发生在加载期而非运行期。
+ * 现改为单一类声明 + 构造期依赖校验，行为可预期。
+ */
+class KodeQueueDriver implements QueueDriverInterface
+{
     /**
-     * kode/queue 驱动器实现
+     * kode/queue 队列实例
+     */
+    protected object $queue;
+
+    /**
+     * 默认队列名称
+     */
+    protected string $queueName;
+
+    /**
+     * @param object $queue Kode\Queue\QueueInterface 实例
+     * @param string $queueName 默认队列名称
      *
-     * 将事件派发到 kode/queue 队列中
+     * @throws RuntimeException 队列实例缺少必要方法时抛出
      */
-    class KodeQueueDriver implements QueueDriverInterface
+    public function __construct(object $queue, string $queueName = 'events')
     {
-        /**
-         * kode/queue 实例
-         */
-        protected object $queue;
-
-        /**
-         * 队列名称
-         */
-        protected string $queueName;
-
-        /**
-         * 构造 kode/queue 驱动器
-         *
-         * @param object $queue Kode\Queue\QueueInterface 实例
-         * @param string $queueName 队列名称
-         */
-        public function __construct(object $queue, string $queueName = 'events')
-        {
-            $this->queue = $queue;
-            $this->queueName = $queueName;
-        }
-
-        /**
-         * 推送事件到队列
-         */
-        public function push(string $job, array $data = [], ?string $queue = null): string
-        {
-            return $this->queue->push($job, $data, $queue ?? $this->queueName);
-        }
-
-        /**
-         * 延迟推送事件到队列
-         */
-        public function later(int $delay, string $job, array $data = [], ?string $queue = null): string
-        {
-            return $this->queue->later($delay, $job, $data, $queue ?? $this->queueName);
-        }
-
-        /**
-         * 从队列中取出事件
-         */
-        public function pop(?string $queue = null): ?array
-        {
-            $job = $this->queue->pop($queue ?? $this->queueName);
-
-            if ($job === null || $job === false) {
-                return null;
+        foreach (['push', 'later', 'pop', 'delete', 'size'] as $method) {
+            if (!method_exists($queue, $method)) {
+                throw new RuntimeException(sprintf(
+                    '队列实例 %s 缺少方法 %s()，请确认已安装 kode/queue：composer require kode/queue',
+                    $queue::class,
+                    $method
+                ));
             }
-
-            return $job;
         }
 
-        /**
-         * 删除任务
-         */
-        public function delete(string $jobId, ?string $queue = null): bool
-        {
-            return $this->queue->delete($jobId, $queue ?? $this->queueName);
-        }
-
-        /**
-         * 获取队列大小
-         */
-        public function size(?string $queue = null): int
-        {
-            return $this->queue->size($queue ?? $this->queueName);
-        }
+        $this->queue = $queue;
+        $this->queueName = $queueName;
     }
-} else {
+
     /**
-     * 占位类 - 当 kode/queue 未安装时
+     * 推送事件到队列
      */
-    class KodeQueueDriver implements QueueDriverInterface
+    public function push(string $job, array $data = [], ?string $queue = null): string
     {
-        public function __construct()
-        {
-            throw new \RuntimeException(
-                'kode/queue is not installed. Run: composer require kode/queue'
-            );
-        }
+        return (string) $this->queue->push($job, $data, $queue ?? $this->queueName);
+    }
 
-        public function push(string $job, array $data = [], ?string $queue = null): string
-        {
-            return '';
-        }
+    /**
+     * 延迟推送事件到队列
+     */
+    public function later(int $delay, string $job, array $data = [], ?string $queue = null): string
+    {
+        return (string) $this->queue->later($delay, $job, $data, $queue ?? $this->queueName);
+    }
 
-        public function later(int $delay, string $job, array $data = [], ?string $queue = null): string
-        {
-            return '';
-        }
+    /**
+     * 从队列中取出事件
+     */
+    public function pop(?string $queue = null): ?array
+    {
+        $job = $this->queue->pop($queue ?? $this->queueName);
 
-        public function pop(?string $queue = null): ?array
-        {
-            return null;
-        }
+        return is_array($job) ? $job : null;
+    }
 
-        public function delete(string $jobId, ?string $queue = null): bool
-        {
-            return false;
-        }
+    /**
+     * 删除任务
+     */
+    public function delete(string $jobId, ?string $queue = null): bool
+    {
+        return (bool) $this->queue->delete($jobId, $queue ?? $this->queueName);
+    }
 
-        public function size(?string $queue = null): int
-        {
-            return 0;
-        }
+    /**
+     * 获取队列大小
+     */
+    public function size(?string $queue = null): int
+    {
+        return (int) $this->queue->size($queue ?? $this->queueName);
+    }
+
+    /**
+     * 获取底层队列实例
+     */
+    public function getQueue(): object
+    {
+        return $this->queue;
     }
 }

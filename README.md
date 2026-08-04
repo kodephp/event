@@ -13,6 +13,13 @@
 - **协程安全** - 基于 `kode/context` 的协程上下文传递
 - **AOP 切面** - 结合 `kode/aop` 实现切面事件
 - **依赖注入** - 支持 `kode/di` 属性注入
+- **PSR-14 互操作** - 同时实现 `EventDispatcherInterface` 与 `ListenerProviderInterface`，无缝接入任意 PSR-14 生态
+- **错误处理策略** - 监听器异常支持 抛出 / 收集 / 忽略 三种策略，并支持 `onError` 钩子
+- **短路派发** - `until()` 责任链式派发，返回首个非 null 结果即停止
+- **运行指标** - 内置 `DispatcherStats` 采集派发次数、耗时与慢事件
+- **命名事件路由** - 通过 `NamedEventInterface` 按事件名路由任意对象
+- **递归深度保护** - 防止事件循环导致栈溢出
+- **派发钩子** - 支持前置 / 后置派发钩子
 - **PHP 8.5** - 支持新版本语言特性
 
 ## 环境要求
@@ -50,6 +57,13 @@ composer require kode/event
 - [事件重放](#事件重放)
 - [事件中间件](#事件中间件)
 - [事件验证](#事件验证)
+- [PSR-14 互操作](#psr-14-互操作)
+- [调度策略（错误处理）](#调度策略错误处理)
+- [短路派发 until](#短路派发-until)
+- [运行指标 DispatcherStats](#运行指标-dispatcherstats)
+- [命名事件 NamedEventInterface](#命名事件-namedeventinterface)
+- [递归深度保护](#递归深度保护)
+- [派发钩子](#派发钩子)
 - [异步队列](#异步队列)
 - [协程安全](#协程安全)
 - [AOP 切面](#aop-切面)
@@ -1025,6 +1039,141 @@ $dispatcher->listen('*.*', function (Event $event) {
 });
 ```
 
+## PSR-14 互操作
+
+`Dispatcher` 同时实现 `Psr\EventDispatcher\EventDispatcherInterface` 与 `ListenerProviderInterface`，
+因此可直接接入任何遵循 PSR-14 的框架或库；`ListenerRegistry` 也实现了 `ListenerProviderInterface`。
+
+除了按字符串事件名派发，还支持派发**任意对象**：
+
+- 对象实现 `Kode\Event\NamedEventInterface`（提供 `getName()`）时，按事件名路由；
+- 其余对象按「类名 + 父类链 + 实现的接口」解析，从而命中针对其父类型或接口注册的监听器。
+
+```php
+interface UserEvent {}
+class UserRegistered implements UserEvent {}
+
+$dispatcher->listen(UserEvent::class, function () {
+    echo "任意用户事件\n";
+});
+
+$dispatcher->dispatch(new UserRegistered()); // 命中上面的监听器
+```
+
+## 调度策略（错误处理）
+
+监听器抛出的异常可通过 `ErrorStrategy` 枚举控制后续行为：
+
+| 策略 | 行为 |
+|------|------|
+| `THROW`   | 立即向上抛出，中断监听链（默认，兼容旧版本） |
+| `COLLECT` | 收集所有异常并继续执行，派发结束后以 `EventDispatchException` 聚合抛出 |
+| `IGNORE`  | 忽略异常并继续执行，仅通过 `onError` 回调通知 |
+
+```php
+use Kode\Event\ErrorStrategy;
+use Kode\Event\Exception\EventDispatchException;
+
+$dispatcher->setErrorStrategy(ErrorStrategy::COLLECT);
+
+$dispatcher->listen('risky', fn() => throw new \RuntimeException('a'));
+$dispatcher->listen('risky', fn() => throw new \DomainException('b'));
+
+try {
+    $dispatcher->dispatch(new Event('risky'));
+} catch (EventDispatchException $e) {
+    $e->getErrorCount(); // 2
+    $e->getEventName();  // 'risky'
+    $e->getErrors();     // [RuntimeException, DomainException]
+}
+```
+
+```php
+// 无论采用哪种策略，都可通过 onError 接收异常
+$dispatcher->onError(function (object $event, \Throwable $e) {
+    logger()->error($e->getMessage(), ['event' => $event::class]);
+});
+```
+
+## 短路派发 until
+
+`until()` 沿责任链派发，一旦某个监听器返回非 `null` 值立即返回该值并停止后续监听器，
+常用于「首个命中即返回」的场景。
+
+```php
+$dispatcher->listen('cache.resolve', fn() => null);
+$dispatcher->listen('cache.resolve', fn() => 'hit');
+
+$value = $dispatcher->until('cache.resolve'); // 'hit'，后续监听器不会执行
+```
+
+## 运行指标 DispatcherStats
+
+通过 `enableStats()` 开启后，调度器会采集每次派发的次数、耗时、监听器调用数与异常数，
+并记录超过阈值的慢事件，便于线上可观测与性能排查。
+
+```php
+$dispatcher = (new Dispatcher())->enableStats(thresholdMs: 100.0);
+$dispatcher->listen('measured', fn() => null);
+$dispatcher->dispatch(new Event('measured'));
+
+$stats = $dispatcher->getStats();
+$stats->getTotalDispatches(); // 1
+$stats->getCount('measured'); // 1
+$stats->getMetrics();         // 按事件名聚合
+$stats->getSlowEvents();      // 超过阈值的慢事件
+$stats->getTopByTotalTime();  // 按总耗时 TopN
+$stats->toArray();            // 可序列化摘要
+```
+
+## 命名事件 NamedEventInterface
+
+实现 `NamedEventInterface` 的任意对象会按其 `getName()` 返回的事件名路由，
+无需继承 `Event` 即可参与事件系统。
+
+```php
+use Kode\Event\NamedEventInterface;
+
+class OrderShipped implements NamedEventInterface
+{
+    public function getName(): string
+    {
+        return 'order.shipped';
+    }
+}
+
+$dispatcher->listen('order.shipped', fn() => /* ... */);
+$dispatcher->dispatch(new OrderShipped()); // 命中
+```
+
+## 递归深度保护
+
+为防止事件在监听器内递归派发导致的栈溢出，调度器内置最大递归深度（默认 `32`）。
+超过上限会抛出 `Kode\Event\Exception\PropagationException`。
+
+```php
+$dispatcher = (new Dispatcher())->setMaxDepth(16);
+$dispatcher->getMaxDepth(); // 16
+
+$dispatcher->listen('recursive', fn($e) => $dispatcher->dispatch(new Event('recursive')));
+// 超过深度后抛出 PropagationException
+```
+
+## 派发钩子
+
+可在派发前后插入钩子：前置钩子可返回新的事件对象以替换原事件，后置钩子用于善后或观测。
+
+```php
+$dispatcher->addPreDispatcher(function (object $event): object {
+    // 返回新对象以替换，返回原对象或 null 则保持
+    return $event;
+});
+
+$dispatcher->addPostDispatcher(function (object $event): void {
+    // 派发完成后的统一处理
+});
+```
+
 ## 异步队列
 
 ```bash
@@ -1205,10 +1354,23 @@ $runtime->close();
 | 方法 | 说明 |
 |------|------|
 | `listen(string $event, $listener, int $priority)` | 注册监听器 |
+| `once(string $event, $listener, int $priority)` | 注册一次性监听器（触发后自动注销） |
 | `unlisten(string $event, $listener)` | 注销监听器 |
 | `subscribe(SubscriberInterface $subscriber)` | 注册订阅者 |
+| `subscribeMany(array $subscribers)` | 批量注册订阅者 |
 | `dispatch(Event\|string $event, array $data)` | 派发事件 |
+| `dispatchEvent(Event\|string $event, array $data)` | 派发并返回强类型 Event |
 | `dispatchMany(Event ...$events)` | 批量派发 |
+| `until(Event\|string $event, array $data)` | 短路派发，返回首个非 null 结果 |
+| `setErrorStrategy(ErrorStrategy $s)` | 设置监听器异常处理策略 |
+| `getErrorStrategy()` | 获取当前异常处理策略 |
+| `onError(callable $handler)` | 注册异常回调钩子 |
+| `addPreDispatcher(callable $hook)` | 添加前置派发钩子 |
+| `addPostDispatcher(callable $hook)` | 添加后置派发钩子 |
+| `setMaxDepth(int $depth)` | 设置最大递归派发深度 |
+| `getMaxDepth()` / `getDepth()` | 获取最大/当前递归深度 |
+| `enableStats(float $slowThresholdMs)` | 开启运行指标采集 |
+| `disableStats()` / `getStats()` | 关闭 / 获取运行指标 |
 | `hasListeners(string $event)` | 检查是否有监听器 |
 | `getListeners(string $event)` | 获取监听器列表 |
 | `clear(?string $event)` | 清空监听器 |
@@ -1291,8 +1453,19 @@ src/
 │   ├── Priority.php                 # 优先级属性
 │   └── Subscriber.php              # 订阅者属性
 ├── Exception/                       # 异常
-│   └── EventException.php          # 事件异常
-├── Event.php                        # 基础事件类
+│   ├── EventException.php          # 基础异常
+│   ├── EventDispatchException.php  # 派发聚合异常（COLLECT 策略）
+│   ├── InvalidEventException.php   # 事件名 / 事件对象非法
+│   ├── ListenerException.php       # 监听器非法
+│   └── PropagationException.php    # 递归深度超限等传播异常
+├── Event.php                        # 基础事件类（实现 NamedEventInterface / StoppableEventInterface）
+├── NamedEventInterface.php          # 命名事件接口（按 getName() 路由）
+├── StoppableEventInterface.php     # 可停止传播接口
+├── DispatcherInterface.php          # 调度器契约
+├── Dispatcher.php                   # 事件调度器（实现 DispatcherInterface + PSR-14）
+├── DispatcherStats.php             # 运行指标采集
+├── ErrorStrategy.php               # 监听器异常处理策略枚举
+├── ListenerRegistry.php            # 监听器注册表（实现 PSR-14 ListenerProviderInterface）
 ├── AbstractEvent.php               # 抽象事件类
 ├── AbstractListener.php            # 监听器抽象类
 ├── AttributeListenerRegistry.php   # 属性监听器注册器
@@ -1309,6 +1482,9 @@ src/
 ├── EventInterceptorInterface.php   # 拦截器接口
 ├── EventListenerTrait.php         # 监听器特性
 ├── EventMiddleware.php            # 事件中间件
+├── EventMiddlewareInterface.php   # 中间件契约
+├── LoggingMiddleware.php          # 日志中间件（写入内部缓冲，可导出）
+├── ValidationMiddleware.php       # 验证中间件（基于通配符规则）
 ├── EventNames.php                 # 事件名称常量
 ├── EventPipeline.php              # 事件管道
 ├── EventPriority.php              # 事件优先级枚举

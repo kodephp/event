@@ -7,7 +7,9 @@ namespace Kode\Event;
 /**
  * 可停止事件接口
  *
- * 用于需要支持停止传播的事件
+ * 用于需要支持停止传播的事件。
+ * 与 PSR-14 的 StoppableEventInterface 语义一致，
+ * 并额外提供主动停止传播的 stopPropagation() 方法。
  */
 interface StoppableEventInterface
 {
