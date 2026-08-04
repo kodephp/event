@@ -45,6 +45,7 @@ class LoggingMiddleware implements EventMiddlewareInterface
     /**
      * 处理事件
      */
+    #[\Override]
     public function handle(Event $event, callable $next): mixed
     {
         $name = $event->getName();

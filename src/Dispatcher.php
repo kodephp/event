@@ -94,6 +94,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     /**
      * 注册监听器
      */
+    #[\Override]
     public function listen(string $event, callable|ListenerInterface $listener, int $priority = 0): static
     {
         $this->registry->listen($event, $listener, $priority);
@@ -103,6 +104,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     /**
      * 注册一次性监听器，触发一次后自动注销
      */
+    #[\Override]
     public function once(string $event, callable|ListenerInterface $listener, int $priority = 0): static
     {
         $this->registry->listenOnce($event, $listener, $priority);
@@ -123,6 +125,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     /**
      * 注销监听器
      */
+    #[\Override]
     public function unlisten(string $event, callable|ListenerInterface $listener): static
     {
         $this->registry->unlisten($event, $listener);
@@ -132,6 +135,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     /**
      * 注册订阅者
      */
+    #[\Override]
     public function subscribe(SubscriberInterface $subscriber): static
     {
         $subscriber->subscribe($this);
@@ -165,6 +169,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
      * @throws PropagationException 递归派发深度超限
      * @throws EventDispatchException COLLECT 策略下监听器抛出异常
      */
+    #[\Override]
     public function dispatch(object|string $event, array $data = []): object
     {
         $event = is_string($event) ? new Event($event, $data) : $event;
@@ -442,6 +447,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     /**
      * 检查事件是否存在监听器
      */
+    #[\Override]
     public function hasListeners(string $event): bool
     {
         return $this->registry->hasListeners($event);
@@ -450,6 +456,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     /**
      * 获取事件的所有监听器
      */
+    #[\Override]
     public function getListeners(string $event): array
     {
         return $this->registry->getListeners($event);
@@ -466,6 +473,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     /**
      * 清空监听器
      */
+    #[\Override]
     public function clear(?string $event = null): static
     {
         $this->registry->clear($event);

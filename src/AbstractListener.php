@@ -36,6 +36,7 @@ abstract class AbstractListener implements ListenerInterface
     /**
      * 实现 ListenerInterface
      */
+    #[\Override]
     public function handle(Event $event): void
     {
         $this->handleEvent($event);

@@ -74,39 +74,41 @@ class AspectEventDispatcher extends Dispatcher
     /**
      * 派发事件（带 AOP 切面）
      *
-     * @param Event|string $event 事件对象或事件名称
-     * @param array $data 事件数据
-     * @return Event
+     * @param object|string $event 事件对象或事件名称
+     * @param array<string, mixed> $data 事件数据
+     * @return object 派发后的事件对象
      */
-    public function dispatch(Event|string $event, array $data = []): Event
+    #[\Override]
+    public function dispatch(object|string $event, array $data = []): object
     {
         if (is_string($event)) {
             $event = new Event($event, $data);
         }
 
-        $this->triggerBeforeAspects($event);
-        $event = $this->triggerPreDispatch($event);
-
-        if ($event->isPropagationStopped()) {
-            return $event;
-        }
-
-        foreach ($this->registry->getListeners($event->getName()) as $item) {
-            $listener = $item['listener'];
-
-            if ($listener instanceof \Kode\Event\ListenerInterface) {
-                $listener->handle($event);
-            } else {
-                ($listener)($event);
-            }
+        // 切面与监听器循环仅面向 Event 对象；其它对象透传返回
+        if ($event instanceof Event) {
+            $this->triggerBeforeAspects($event);
 
             if ($event->isPropagationStopped()) {
-                break;
+                return $event;
             }
-        }
 
-        $this->triggerPostDispatch($event);
-        $this->triggerAfterAspects($event);
+            foreach ($this->registry->getListeners($event->getName()) as $item) {
+                $listener = $item['listener'];
+
+                if ($listener instanceof \Kode\Event\ListenerInterface) {
+                    $listener->handle($event);
+                } else {
+                    ($listener)($event);
+                }
+
+                if ($event->isPropagationStopped()) {
+                    break;
+                }
+            }
+
+            $this->triggerAfterAspects($event);
+        }
 
         return $event;
     }

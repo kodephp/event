@@ -29,6 +29,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 设置上下文值
      */
+    #[\Override]
     public function set(string $key, mixed $value): void
     {
         KodeContext::set($key, $value);
@@ -37,6 +38,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 获取上下文值
      */
+    #[\Override]
     public function get(string $key, mixed $default = null): mixed
     {
         return KodeContext::get($key, $default);
@@ -45,6 +47,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 检查键是否存在
      */
+    #[\Override]
     public function has(string $key): bool
     {
         return KodeContext::has($key);
@@ -53,6 +56,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 删除键
      */
+    #[\Override]
     public function delete(string $key): void
     {
         KodeContext::delete($key);
@@ -61,6 +65,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 清空上下文
      */
+    #[\Override]
     public function clear(): void
     {
         KodeContext::clear();
@@ -69,6 +74,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 复制当前上下文
      */
+    #[\Override]
     public function copy(): array
     {
         return KodeContext::copy();
@@ -77,6 +83,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 恢复上下文
      */
+    #[\Override]
     public function restore(array $snapshot): void
     {
         KodeContext::restore($snapshot);
@@ -85,6 +92,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 在隔离作用域中执行
      */
+    #[\Override]
     public function run(callable $callable): mixed
     {
         return KodeContext::run($callable);
@@ -93,6 +101,7 @@ class ContextStorage implements CoroutineContextInterface
     /**
      * 在继承作用域中执行
      */
+    #[\Override]
     public function fork(callable $callable): mixed
     {
         return KodeContext::fork($callable);

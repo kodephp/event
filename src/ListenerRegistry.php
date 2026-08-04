@@ -194,6 +194,7 @@ class ListenerRegistry implements ListenerProviderInterface
      * @param object $event
      * @return iterable<callable>
      */
+    #[\Override]
     public function getListenersForEvent(object $event): iterable
     {
         foreach ($this->resolveEntriesForObject($event) as $entry) {

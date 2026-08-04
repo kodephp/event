@@ -50,6 +50,7 @@ class ValidationMiddleware implements EventMiddlewareInterface
      *
      * @throws InvalidEventException 校验不通过时抛出
      */
+    #[\Override]
     public function handle(Event $event, callable $next): mixed
     {
         $name = $event->getName();

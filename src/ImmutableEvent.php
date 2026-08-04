@@ -56,6 +56,7 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
         return isset($this->data[$key]);
     }
 
+    #[\Override]
     public function isPropagationStopped(): bool
     {
         return $this->propagationStopped;
@@ -88,6 +89,7 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
         return new self($this->name, $this->data, true, $this->timestamp);
     }
 
+    #[\Override]
     public function getName(): string
     {
         return $this->name;
@@ -98,6 +100,7 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
         return $this->data;
     }
 
+    #[\Override]
     public function __toString(): string
     {
         return sprintf('ImmutableEvent(%s)', $this->name);

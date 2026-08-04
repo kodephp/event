@@ -54,6 +54,7 @@ class KodeQueueDriver implements QueueDriverInterface
     /**
      * 推送事件到队列
      */
+    #[\Override]
     public function push(string $job, array $data = [], ?string $queue = null): string
     {
         return (string) $this->queue->push($job, $data, $queue ?? $this->queueName);
@@ -62,6 +63,7 @@ class KodeQueueDriver implements QueueDriverInterface
     /**
      * 延迟推送事件到队列
      */
+    #[\Override]
     public function later(int $delay, string $job, array $data = [], ?string $queue = null): string
     {
         return (string) $this->queue->later($delay, $job, $data, $queue ?? $this->queueName);
@@ -70,6 +72,7 @@ class KodeQueueDriver implements QueueDriverInterface
     /**
      * 从队列中取出事件
      */
+    #[\Override]
     public function pop(?string $queue = null): ?array
     {
         $job = $this->queue->pop($queue ?? $this->queueName);
@@ -80,6 +83,7 @@ class KodeQueueDriver implements QueueDriverInterface
     /**
      * 删除任务
      */
+    #[\Override]
     public function delete(string $jobId, ?string $queue = null): bool
     {
         return (bool) $this->queue->delete($jobId, $queue ?? $this->queueName);
@@ -88,6 +92,7 @@ class KodeQueueDriver implements QueueDriverInterface
     /**
      * 获取队列大小
      */
+    #[\Override]
     public function size(?string $queue = null): int
     {
         return (int) $this->queue->size($queue ?? $this->queueName);

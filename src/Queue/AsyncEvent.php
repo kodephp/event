@@ -148,6 +148,7 @@ class AsyncEvent extends Event
      * @param int $delay 延迟秒数
      * @param string|null $queue 队列名称
      */
+    #[\Override]
     public static function create(
         string $name,
         array $data = [],

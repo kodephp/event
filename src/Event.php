@@ -86,6 +86,7 @@ class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppabl
     /**
      * 获取事件名称
      */
+    #[\Override]
     public function getName(): string
     {
         return $this->name;
@@ -231,6 +232,7 @@ class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppabl
      *
      * @param string|null $reason 停止原因，便于排查「事件为何未被处理」
      */
+    #[\Override]
     public function stopPropagation(?string $reason = null): void
     {
         $this->propagationStopped = true;
@@ -240,6 +242,7 @@ class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppabl
     /**
      * 检查事件是否已停止传播
      */
+    #[\Override]
     public function isPropagationStopped(): bool
     {
         return $this->propagationStopped;
@@ -315,6 +318,7 @@ class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppabl
     /**
      * Stringable 接口实现
      */
+    #[\Override]
     public function __toString(): string
     {
         return sprintf('Event(%s)', $this->name);

@@ -41,6 +41,7 @@ abstract class AbstractEvent extends Event implements PsrStoppableEventInterface
      *
      * @param array<string, mixed> $data
      */
+    #[\Override]
     public static function create(string $name = '', array $data = []): static
     {
         return new static($data);
@@ -49,6 +50,7 @@ abstract class AbstractEvent extends Event implements PsrStoppableEventInterface
     /**
      * Stringable 接口实现
      */
+    #[\Override]
     public function __toString(): string
     {
         return sprintf('%s(%s)', static::class, $this->name);
