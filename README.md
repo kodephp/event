@@ -65,6 +65,7 @@ composer require kode/event
 - [命名事件 NamedEventInterface](#命名事件-namedeventinterface)
 - [递归深度保护](#递归深度保护)
 - [派发钩子](#派发钩子)
+- [JSON 序列化](#json-序列化)
 - [异步队列](#异步队列)
 - [协程安全](#协程安全)
 - [AOP 切面](#aop-切面)
@@ -1173,6 +1174,46 @@ $dispatcher->addPreDispatcher(function (object $event): object {
 $dispatcher->addPostDispatcher(function (object $event): void {
     // 派发完成后的统一处理
 });
+```
+
+## JSON 序列化
+
+事件天然实现 `JsonSerializable`，可一键序列化为 JSON，便于跨进程传输、入队与重放。
+反序列化使用 **PHP 8.3 的 `json_validate()`** 在解析前做轻量校验，无效载荷会抛出
+`Kode\Event\Exception\InvalidEventException`，避免把脏数据交给 `json_decode`。
+
+```php
+use Kode\Event\Event;
+
+$event = (new Event('user.created', ['id' => 7]))
+    ->setTraceId('trace-123')
+    ->setMeta('source', 'api');
+// 支持 JSON_UNESCAPED_UNICODE 等 json_encode 标志位
+$json = $event->toJson(JSON_UNESCAPED_UNICODE);
+
+// 从 JSON 还原（校验失败抛 InvalidEventException）
+$restored = Event::fromJson($json);
+$restored->getName();   // 'user.created'
+$restored->get('id');   // 7
+$restored->getTraceId(); // 'trace-123'
+
+// 也可从关联数组重建
+$same = Event::fromArray(['name' => 'user.created', 'data' => ['id' => 7]]);
+```
+
+`AsyncEvent` 与 `ImmutableEvent` 同样支持，且 `AsyncEvent` 会一并携带 `delay` / `queue` /
+`context` / `jobId` 等异步专属字段：
+
+```php
+use Kode\Event\Queue\AsyncEvent;
+
+$event = (new AsyncEvent('mail.send', ['to' => 'a@b.com'], 30, 'emails'))
+    ->setContext(['retry' => 2]);
+$json = $event->toJson();
+
+$restored = AsyncEvent::fromJson($json);
+$restored->getDelay();  // 30
+$restored->getQueue();  // 'emails'
 ```
 
 ## 异步队列

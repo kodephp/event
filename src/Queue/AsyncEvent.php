@@ -176,6 +176,41 @@ class AsyncEvent extends Event
     }
 
     /**
+     * 导出可移植快照（含异步专属字段）
+     *
+     * @return array<string, mixed>
+     */
+    #[\Override]
+    public function jsonSerialize(): array
+    {
+        return parent::jsonSerialize() + [
+            'job_id' => $this->jobId,
+            'queue' => $this->queue,
+            'delay' => $this->delay,
+            'context' => $this->context,
+        ];
+    }
+
+    /**
+     * 从关联数组重建异步事件
+     *
+     * @param array<string, mixed> $payload
+     * @throws \Kode\Event\Exception\InvalidEventException
+     */
+    #[\Override]
+    public static function fromArray(array $payload): static
+    {
+        $event = parent::fromArray($payload);
+
+        $event->jobId = $payload['job_id'] ?? $payload['jobId'] ?? null;
+        $event->queue = $payload['queue'] ?? null;
+        $event->delay = (int) ($payload['delay'] ?? 0);
+        $event->context = $payload['context'] ?? [];
+
+        return $event;
+    }
+
+    /**
      * 从队列负载创建异步事件
      *
      * @param array $payload

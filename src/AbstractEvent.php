@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kode\Event;
 
+use Kode\Event\Exception\InvalidEventException;
 use Psr\EventDispatcher\StoppableEventInterface as PsrStoppableEventInterface;
 use Stringable;
 
@@ -54,5 +55,48 @@ abstract class AbstractEvent extends Event implements PsrStoppableEventInterface
     public function __toString(): string
     {
         return sprintf('%s(%s)', static::class, $this->name);
+    }
+
+    /**
+     * 从关联数组重建抽象事件
+     *
+     * 抽象事件的构造签名仅接受数据数组，故此处单独实现，
+     * 其余元数据/传播状态复用与父类一致的恢复逻辑。
+     *
+     * @param array<string, mixed> $payload
+     * @throws InvalidEventException
+     */
+    #[\Override]
+    public static function fromArray(array $payload): static
+    {
+        $name = $payload['name'] ?? null;
+
+        if (!is_string($name) || $name === '') {
+            throw InvalidEventException::emptyName();
+        }
+
+        $event = new static($payload['data'] ?? []);
+
+        if (!empty($payload['metadata']) && is_array($payload['metadata'])) {
+            $event->metadata = $payload['metadata'];
+        }
+
+        if (isset($payload['trace_id']) && is_string($payload['trace_id'])) {
+            $event->traceId = $payload['trace_id'];
+        }
+
+        if (!empty($payload['propagation_stopped'])) {
+            $event->propagationStopped = true;
+
+            if (!empty($payload['stop_reason']) && is_string($payload['stop_reason'])) {
+                $event->stopReason = $payload['stop_reason'];
+            }
+        }
+
+        if (isset($payload['timestamp']) && is_numeric($payload['timestamp'])) {
+            $event->timestamp = (float) $payload['timestamp'];
+        }
+
+        return $event;
     }
 }

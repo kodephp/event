@@ -34,4 +34,14 @@ class InvalidEventException extends EventException
     {
         return new self('事件必须为对象或字符串，当前类型: ' . get_debug_type($event));
     }
+
+    /**
+     * JSON 事件数据无效（PHP 8.3 json_validate 校验失败或结构非法）
+     */
+    public static function invalidJson(string $json): self
+    {
+        $preview = mb_strimwidth($json, 0, 80, '…');
+
+        return new self("无效的 JSON 事件数据: {$preview}");
+    }
 }

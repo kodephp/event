@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kode\Event;
 
+use JsonSerializable;
+use Kode\Event\Exception\InvalidEventException;
 use Psr\EventDispatcher\StoppableEventInterface as PsrStoppableEventInterface;
 use Stringable;
 
@@ -14,7 +16,7 @@ use Stringable;
  * 实现 {@see NamedEventInterface} 与 PSR-14 {@see PsrStoppableEventInterface}，
  * 可直接被调度器按事件名路由。
  */
-class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface, Stringable
+class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface, Stringable, JsonSerializable
 {
     public readonly string $name;
 
@@ -109,5 +111,80 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
     public static function create(string $name, array $data = []): self
     {
         return new self($name, $data);
+    }
+
+    // ------------------------------------------------------------------
+    // JSON 序列化（PHP 8.3 json_validate）
+    // ------------------------------------------------------------------
+
+    /**
+     * 实现 JsonSerializable
+     *
+     * @return array{name: string, data: array<string, mixed>, propagation_stopped: bool, timestamp: float}
+     */
+    public function jsonSerialize(): array
+    {
+        return [
+            'name' => $this->name,
+            'data' => $this->data,
+            'propagation_stopped' => $this->propagationStopped,
+            'timestamp' => $this->timestamp,
+        ];
+    }
+
+    /**
+     * 序列化为 JSON 字符串
+     */
+    public function toJson(int $flags = 0): string
+    {
+        return json_encode($this->jsonSerialize(), $flags | JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * 从 JSON 字符串重建不可变事件
+     *
+     * @throws InvalidEventException
+     */
+    public static function fromJson(string $json): self
+    {
+        if (!json_validate($json)) {
+            throw InvalidEventException::invalidJson($json);
+        }
+
+        try {
+            $payload = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            throw InvalidEventException::invalidJson($json);
+        }
+
+        if (!is_array($payload)) {
+            throw InvalidEventException::invalidJson($json);
+        }
+
+        return self::fromArray($payload);
+    }
+
+    /**
+     * 从关联数组重建不可变事件
+     *
+     * @param array<string, mixed> $payload
+     * @throws InvalidEventException
+     */
+    public static function fromArray(array $payload): self
+    {
+        $name = $payload['name'] ?? null;
+
+        if (!is_string($name) || $name === '') {
+            throw InvalidEventException::emptyName();
+        }
+
+        return new self(
+            $name,
+            $payload['data'] ?? [],
+            !empty($payload['propagation_stopped']),
+            isset($payload['timestamp']) && is_numeric($payload['timestamp'])
+                ? (float) $payload['timestamp']
+                : null
+        );
     }
 }

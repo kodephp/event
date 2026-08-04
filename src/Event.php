@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kode\Event;
 
+use JsonSerializable;
+use Kode\Event\Exception\InvalidEventException;
 use Psr\EventDispatcher\StoppableEventInterface as PsrStoppableEventInterface;
 use Stringable;
 
@@ -15,7 +17,7 @@ use Stringable;
  * 同时实现库内 {@see StoppableEventInterface} 与 PSR-14
  * {@see PsrStoppableEventInterface}，可直接被任意 PSR-14 调度器消费。
  */
-class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppableEventInterface, Stringable
+class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppableEventInterface, Stringable, JsonSerializable
 {
     /**
      * 事件名称
@@ -313,6 +315,106 @@ class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppabl
             'timestamp' => $this->timestamp,
             'propagation_stopped' => $this->propagationStopped,
         ];
+    }
+
+    // ------------------------------------------------------------------
+    // JSON 序列化（PHP 8.3 json_validate）
+    // ------------------------------------------------------------------
+
+    /**
+     * 实现 JsonSerializable：导出可移植的事件快照
+     *
+     * @return array{name: string, data: array<string, mixed>, metadata: array<string, mixed>, trace_id: string|null, timestamp: float, propagation_stopped: bool, stop_reason: string|null}
+     */
+    public function jsonSerialize(): array
+    {
+        return [
+            'name' => $this->name,
+            'data' => $this->data,
+            'metadata' => $this->metadata,
+            'trace_id' => $this->traceId,
+            'timestamp' => $this->timestamp,
+            'propagation_stopped' => $this->propagationStopped,
+            'stop_reason' => $this->stopReason,
+        ];
+    }
+
+    /**
+     * 序列化为 JSON 字符串
+     *
+     * @param int $flags json_encode 标志位
+     */
+    public function toJson(int $flags = 0): string
+    {
+        return json_encode($this->jsonSerialize(), $flags | JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * 从 JSON 字符串重建事件
+     *
+     * 使用 PHP 8.3 的 json_validate() 在解析前做轻量校验，
+     * 避免把无效载荷交给 json_decode 产生难以定位的错误。
+     *
+     * @throws InvalidEventException
+     */
+    public static function fromJson(string $json): static
+    {
+        if (!json_validate($json)) {
+            throw InvalidEventException::invalidJson($json);
+        }
+
+        try {
+            $payload = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            throw InvalidEventException::invalidJson($json);
+        }
+
+        if (!is_array($payload)) {
+            throw InvalidEventException::invalidJson($json);
+        }
+
+        return static::fromArray($payload);
+    }
+
+    /**
+     * 从关联数组重建事件
+     *
+     * 子类可重写以恢复各自专属字段（如 AsyncEvent 的延迟/队列）。
+     *
+     * @param array<string, mixed> $payload
+     * @throws InvalidEventException
+     */
+    public static function fromArray(array $payload): static
+    {
+        $name = $payload['name'] ?? null;
+
+        if (!is_string($name) || $name === '') {
+            throw InvalidEventException::emptyName();
+        }
+
+        $event = new static($name, $payload['data'] ?? []);
+
+        if (!empty($payload['metadata']) && is_array($payload['metadata'])) {
+            $event->metadata = $payload['metadata'];
+        }
+
+        if (isset($payload['trace_id']) && is_string($payload['trace_id'])) {
+            $event->traceId = $payload['trace_id'];
+        }
+
+        if (!empty($payload['propagation_stopped'])) {
+            $event->propagationStopped = true;
+
+            if (!empty($payload['stop_reason']) && is_string($payload['stop_reason'])) {
+                $event->stopReason = $payload['stop_reason'];
+            }
+        }
+
+        if (isset($payload['timestamp']) && is_numeric($payload['timestamp'])) {
+            $event->timestamp = (float) $payload['timestamp'];
+        }
+
+        return $event;
     }
 
     /**
