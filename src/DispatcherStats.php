@@ -197,6 +197,34 @@ class DispatcherStats
     }
 
     /**
+     * 生成不可变指标快照
+     *
+     * 返回 {@see StatsSnapshot} 只读对象，适合在异步/并发上下文中传递冻结数据，
+     * 避免后续指标变动影响已捕获的视图。
+     */
+    public function snapshot(): StatsSnapshot
+    {
+        $totalNs = 0.0;
+
+        foreach ($this->metrics as $metric) {
+            $totalNs += $metric['total_ns'];
+        }
+
+        $averageMs = $this->totalDispatches > 0
+            ? ($totalNs / $this->totalDispatches) / 1_000_000
+            : 0.0;
+
+        return new StatsSnapshot(
+            totalDispatches: $this->totalDispatches,
+            totalErrors: $this->totalErrors,
+            slowEvents: count($this->slowEvents),
+            averageMs: $averageMs,
+            totalMs: $totalNs / 1_000_000,
+            metrics: $this->metrics
+        );
+    }
+
+    /**
      * 重置全部指标
      */
     public function reset(): void

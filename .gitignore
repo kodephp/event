@@ -25,3 +25,7 @@ Thumbs.db
 
 # 测试覆盖率
 /coverage/
+
+# 本地资料（仅本地，不传仓库）
+.workbuddy/
+CHANGELOG.md

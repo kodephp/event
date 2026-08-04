@@ -59,6 +59,7 @@ composer require kode/event
 - [事件中间件](#事件中间件)
 - [事件验证](#事件验证)
 - [PSR-14 互操作](#psr-14-互操作)
+- [外部 PSR-14 提供者聚合](#外部-psr-14-提供者聚合)
 - [调度策略（错误处理）](#调度策略错误处理)
 - [短路派发 until](#短路派发-until)
 - [运行指标 DispatcherStats](#运行指标-dispatcherstats)
@@ -1012,6 +1013,13 @@ EventNames::ORDER_COMPLETED; // 'order.completed'
 $dispatcher->listen(EventNames::USER_CREATED, $listener);
 ```
 
+`EventNames::all()` 利用 PHP 8.3 动态类常量获取枚举全部内置事件名，
+新增常量后自动包含，无需手工维护列表：
+
+```php
+EventNames::all(); // ['app.start', 'user.created', ...]
+```
+
 ## 事件优先级
 
 ```php
@@ -1061,6 +1069,31 @@ $dispatcher->listen(UserEvent::class, function () {
 
 $dispatcher->dispatch(new UserRegistered()); // 命中上面的监听器
 ```
+
+## 外部 PSR-14 提供者聚合
+
+除了内置注册表，还能把**任意第三方 PSR-14 `ListenerProviderInterface`** 聚合进调度器，
+实现跨系统的事件互操作。派发时，命中的命名事件与类型化对象事件都会一并触发这些外部监听器。
+
+```php
+use Psr\EventDispatcher\ListenerProviderInterface;
+
+$provider = new class implements ListenerProviderInterface {
+    public function getListenersForEvent(object $event): iterable
+    {
+        if ($event instanceof \Kode\Event\Event && $event->getName() === 'user.created') {
+            yield fn(\Kode\Event\Event $e) => $e->setMeta('via_provider', true);
+        }
+    }
+};
+
+$dispatcher->addProvider($provider);          // 返回 $this，可链式
+$dispatcher->getProviders();                  // 已聚合的提供者列表
+$dispatcher->getRegistry()->clearProviders(); // 移除全部外部提供者（不影响内置监听器）
+```
+
+> 外部提供者无优先级信息，统一以最低优先级（`seq = PHP_INT_MAX`）在内部监听器之后执行；
+> 因其可能动态增减，聚合状态下解析结果不进入缓存，保证即时生效。
 
 ## 调度策略（错误处理）
 
@@ -1126,6 +1159,19 @@ $stats->getMetrics();         // 按事件名聚合
 $stats->getSlowEvents();      // 超过阈值的慢事件
 $stats->getTopByTotalTime();  // 按总耗时 TopN
 $stats->toArray();            // 可序列化摘要
+```
+
+### 不可变指标快照
+
+`snapshot()` 返回 `readonly` 的 `StatsSnapshot` 对象，提供一次性的聚合视图，
+适合在异步 / 并发上下文中传递冻结数据（如日志上报、链路追踪），调用方无法中途篡改。
+
+```php
+$snapshot = $dispatcher->getStats()->snapshot();
+$snapshot->totalDispatches; // 总派发次数
+$snapshot->totalErrors;     // 累计异常数
+$snapshot->averageMs;       // 平均耗时（毫秒）
+$snapshot->metrics;         // 各事件名聚合指标
 ```
 
 ## 命名事件 NamedEventInterface

@@ -7,6 +7,7 @@ namespace Kode\Event;
 use Kode\Event\Exception\EventDispatchException;
 use Kode\Event\Exception\PropagationException;
 use Psr\EventDispatcher\EventDispatcherInterface as PsrEventDispatcherInterface;
+use Psr\EventDispatcher\ListenerProviderInterface;
 use Psr\EventDispatcher\StoppableEventInterface as PsrStoppableEventInterface;
 use Throwable;
 
@@ -153,6 +154,30 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
             $this->subscribe($subscriber);
         }
         return $this;
+    }
+
+    /**
+     * 聚合一个外部 PSR-14 监听器提供者（跨系统事件互操作）
+     *
+     * 允许将任意兼容 PSR-14 的提供者（如第三方框架的事件系统）接入本调度器，
+     * 派发任意事件对象时会同时触发其注册的监听器。
+     *
+     * @return $this
+     */
+    public function addProvider(ListenerProviderInterface $provider): static
+    {
+        $this->registry->addProvider($provider);
+        return $this;
+    }
+
+    /**
+     * 获取所有已聚合的外部 PSR-14 提供者
+     *
+     * @return array<int, ListenerProviderInterface>
+     */
+    public function getProviders(): array
+    {
+        return $this->registry->getProviders();
     }
 
     // ------------------------------------------------------------------

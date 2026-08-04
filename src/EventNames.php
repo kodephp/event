@@ -35,4 +35,28 @@ final class EventNames
 
     public const SYSTEM_ERROR = 'system.error';
     public const SYSTEM_WARNING = 'system.warning';
+
+    /**
+     * 返回全部内置事件名称（利用 PHP 8.3 动态类常量获取）
+     *
+     * 通过 `self::{$name}` 动态读取每个常量值，避免手工维护列表，
+     * 新增常量后自动包含在返回结果中。
+     *
+     * @return string[]
+     */
+    public static function all(): array
+    {
+        $reflection = new \ReflectionClass(self::class);
+        $names = [];
+
+        foreach ($reflection->getReflectionConstants() as $constant) {
+            if ($constant->isPublic()) {
+                /** @var string $value */
+                $value = self::{$constant->getName()};
+                $names[] = $value;
+            }
+        }
+
+        return $names;
+    }
 }

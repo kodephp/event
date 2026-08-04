@@ -58,6 +58,13 @@ class ListenerRegistry implements ListenerProviderInterface
     protected int $sequence = 0;
 
     /**
+     * 外部 PSR-14 监听器提供者（聚合互操作）
+     *
+     * @var array<int, ListenerProviderInterface>
+     */
+    protected array $providers = [];
+
+    /**
      * 注册监听器
      *
      * @param string $event 事件名称，支持 * （任意字符）与 ? （单个字符）通配符
@@ -214,46 +221,71 @@ class ListenerRegistry implements ListenerProviderInterface
     public function resolveEntriesForObject(object $event): array
     {
         if ($event instanceof NamedEventInterface) {
-            return $this->getListeners($event->getName());
-        }
-
-        $keys = $this->resolveObjectKeys($event);
-        $cacheKey = "\0obj\0" . $keys[0];
-
-        if (isset($this->resolvedCache[$cacheKey])) {
-            return $this->resolvedCache[$cacheKey];
-        }
-
-        $resolved = [];
-        $seen = [];
-
-        foreach ($keys as $key) {
-            foreach ($this->listeners[$key] ?? [] as $entry) {
-                if (!isset($seen[$entry['seq']])) {
-                    $seen[$entry['seq']] = true;
-                    $resolved[] = $entry;
-                }
+            // 无外部提供者时直接复用已缓存的内部结果，避免重复排序
+            if ($this->providers === []) {
+                return $this->getListeners($event->getName());
             }
-        }
 
-        foreach ($this->wildcardListeners as $pattern => $entries) {
+            $resolved = $this->getListeners($event->getName());
+        } else {
+            $keys = $this->resolveObjectKeys($event);
+            $cacheKey = "\0obj\0" . $keys[0];
+
+            // 存在外部提供者时不走缓存，避免其动态增减导致结果过期
+            if ($this->providers === [] && isset($this->resolvedCache[$cacheKey])) {
+                return $this->resolvedCache[$cacheKey];
+            }
+
+            $resolved = [];
+            $seen = [];
+
             foreach ($keys as $key) {
-                if (!$this->matchWildcard($key, $pattern)) {
-                    continue;
-                }
-                foreach ($entries as $entry) {
+                foreach ($this->listeners[$key] ?? [] as $entry) {
                     if (!isset($seen[$entry['seq']])) {
                         $seen[$entry['seq']] = true;
                         $resolved[] = $entry;
                     }
                 }
-                break;
+            }
+
+            foreach ($this->wildcardListeners as $pattern => $entries) {
+                foreach ($keys as $key) {
+                    if (!$this->matchWildcard($key, $pattern)) {
+                        continue;
+                    }
+                    foreach ($entries as $entry) {
+                        if (!isset($seen[$entry['seq']])) {
+                            $seen[$entry['seq']] = true;
+                            $resolved[] = $entry;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        // 合并外部 PSR-14 提供者注册的监听器（无优先级信息，统一后置、不重复注销）
+        foreach ($this->providers as $provider) {
+            foreach ($provider->getListenersForEvent($event) as $listener) {
+                $resolved[] = [
+                    'listener' => $listener,
+                    'priority' => $listener instanceof ListenerInterface ? $listener->priority() : 0,
+                    'seq' => PHP_INT_MAX,
+                    'once' => false,
+                    'event' => null,
+                ];
             }
         }
 
         $this->sortBucket($resolved);
 
-        return $this->cache($cacheKey, $resolved);
+        // 存在外部提供者时不缓存，避免其动态增减导致结果过期
+        if ($this->providers === []) {
+            $cacheKey = $event instanceof NamedEventInterface ? $event->getName() : "\0obj\0" . $this->resolveObjectKeys($event)[0];
+            return $this->cache($cacheKey, $resolved);
+        }
+
+        return $resolved;
     }
 
     /**
@@ -342,6 +374,49 @@ class ListenerRegistry implements ListenerProviderInterface
     public function subscribe(SubscriberInterface $subscriber, DispatcherInterface $dispatcher): self
     {
         $subscriber->subscribe($dispatcher);
+        return $this;
+    }
+
+    /**
+     * 聚合一个外部 PSR-14 监听器提供者
+     *
+     * 允许将任意兼容 PSR-14 的提供者（如第三方框架的事件系统、Symfony Messenger 等）
+     * 接入本调度器，实现跨系统的事件互操作：派发事件时会同时触发这些提供者注册的监听器。
+     *
+     * @return $this
+     */
+    public function addProvider(ListenerProviderInterface $provider): self
+    {
+        $this->providers[] = $provider;
+        return $this;
+    }
+
+    /**
+     * 获取所有已聚合的外部提供者
+     *
+     * @return array<int, ListenerProviderInterface>
+     */
+    public function getProviders(): array
+    {
+        return $this->providers;
+    }
+
+    /**
+     * 是否存在已聚合的外部提供者
+     */
+    public function hasProviders(): bool
+    {
+        return $this->providers !== [];
+    }
+
+    /**
+     * 移除全部外部提供者（不影响内部监听器）
+     *
+     * @return $this
+     */
+    public function clearProviders(): self
+    {
+        $this->providers = [];
         return $this;
     }
 
