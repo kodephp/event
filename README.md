@@ -784,6 +784,40 @@ $tracer->getAllTraces();
 $tracer->clear();
 ```
 
+### 分布式追踪（跨进程 / 跨节点）
+
+借助 `kode/context`（^3.0 起提供 W3C Trace Context 标准），`DistributedEventTracer`
+让事件在异步队列、RPC、消息总线等边界传递时仍携带统一链路上下文，与 OpenTelemetry 互通。
+
+```php
+use Kode\Event\DistributedEventTracer;
+use Kode\Event\Event;
+
+$tracer = new DistributedEventTracer();
+
+// 生产端：开启链路并把 traceparent 注入事件
+$tracer->startTrace();
+$event = new Event('order.paid', ['amount' => 100]);
+$tracer->injectToEvent($event);   // 事件 now 携带 traceparent / tracestate
+
+// 经 JSON 序列化跨进程边界
+$json = $event->toJson();
+
+// 消费端：从 JSON 重建事件并恢复同一条链路
+$restored = Event::fromJson($json);
+$tracer->extractFromEvent($restored);   // 返回 true，trace_id 与生产者一致
+
+// 任意时刻读取当前链路
+$tracer->getTraceparent();  // W3C traceparent 字符串
+$tracer->getTraceInfo();    // ['trace_id' => ..., 'span_id' => ..., ...]
+```
+
+`ContextStorage`（协程安全上下文存储）也已升级以使用 context 的最新能力：
+`KodeContext::getInt()` 类型安全读取、`KodeContext::hasAll()` 组合键检查、
+`KodeContext::transaction()` 事务作用域自动回滚。
+
+> 要求 `kode/context: ^3.1`（已随本版本将依赖下限由 `^2.0` 提升至 `^3.1`）。
+
 ## 批量事件
 
 批量构建和派发事件。

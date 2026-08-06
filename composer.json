@@ -11,7 +11,7 @@
         "coroutine",
         "aspect-oriented"
     ],
-    "version": "1.10.0",
+    "version": "1.11.0",
     "authors": [
         {
             "name": "KodePHP Team"
@@ -19,7 +19,7 @@
     ],
     "require": {
         "php": ">=8.3",
-        "kode/context": "^2.0",
+        "kode/context": "^3.1",
         "psr/event-dispatcher": "^1.0"
     },
     "require-dev": {

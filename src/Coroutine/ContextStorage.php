@@ -131,4 +131,36 @@ class ContextStorage implements CoroutineContextInterface
     {
         $this->set('event.trace_id', $traceId);
     }
+
+    /**
+     * 以类型安全方式读取事件时间戳（使用 kode/context ^3.0 的 getInt 访问器）
+     */
+    public function getEventTimestamp(): ?int
+    {
+        return KodeContext::getInt('event.timestamp');
+    }
+
+    /**
+     * 判断事件上下文是否齐备（使用 kode/context ^3.1 的 hasAll 组合键检查）
+     */
+    public function isEventContextPresent(): bool
+    {
+        return KodeContext::hasAll(['event.name', 'event.timestamp']);
+    }
+
+    /**
+     * 在「事务作用域」内临时写入事件上下文并执行回调，结束后自动回滚，
+     * 避免污染外部上下文（使用 kode/context ^3.1 的 transaction）。
+     *
+     * @template T
+     * @param callable(): T $callback
+     * @return T
+     */
+    public function withEventContext(Event $event, callable $callback): mixed
+    {
+        return KodeContext::transaction(function () use ($event, $callback) {
+            $this->setEventContext($event);
+            return $callback();
+        });
+    }
 }
