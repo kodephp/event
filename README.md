@@ -20,6 +20,10 @@
 - **命名事件路由** - 通过 `NamedEventInterface` 按事件名路由任意对象
 - **递归深度保护** - 防止事件循环导致栈溢出
 - **派发钩子** - 支持前置 / 后置派发钩子
+- **事件校验 Schema** - `EventSchema` / `EventSchemaRegistry` 声明必填字段、类型与自定义规则，支持 `explain()` 诊断
+- **组合校验谓词** - `EventPredicates::all()` / `any()` / `none()` 基于 PHP 8.4 数组函数表达复杂语义
+- **批量校验结果** - `EventSchemaRegistry::validateDetailed()` 返回只读 `ValidationResult` DTO
+- **PHP 8.4 数组函数** - 内置 `array_find` / `array_find_key` / `array_any` / `array_all` polyfill（PHP < 8.4 自动启用，8.4+ 让位原生）
 - **PHP 8.5** - 支持新版本语言特性
 - **PHP 8.3+** - 最低运行版本要求，方法重写统一标注 `#[\Override]`
 
@@ -533,6 +537,61 @@ $error = Validator::safeExecuteListener($listener, $event, stopOnError: true);
 if ($error) {
     echo "监听器执行出错: " . $error->getMessage();
 }
+```
+
+## PHP 8.4 数组函数
+
+库内置 `array_find` / `array_find_key` / `array_any` / `array_all` 的 polyfill
+（`src/Php84Functions.php`，经 `composer.json` 的 `autoload.files` 自动加载）。
+在 PHP < 8.4 时提供与官方语义一致的实现；在 PHP >= 8.4 时由引擎原生提供，
+polyfill 通过 `function_exists` 守卫自动跳过，无需任何改动即可享受原生性能。
+
+```php
+use Kode\Event\Php84Features;
+
+Php84Features::hasArrayFunctions(); // PHP 8.4+ 为 true
+Php84Features::hasArrayFind();      // array_find 可用时为 true
+
+// 在 PHP 8.3 上也会自动得到 polyfill 版本
+$first = array_find([1, 2, 3], fn(int $v): bool => $v > 1); // 2
+$allPositive = array_all([-1, 2, 3], fn(int $v): bool => $v > 0); // false
+```
+
+这些函数在事件校验路径中已被直接使用：`EventSchema::validateEvent()` 用 `array_all`
+判定多规则全部通过，`EventSchemaRegistry::findFirstInvalid()` 用 `array_find` 定位首个非法事件，
+`ValidationMiddleware` 用 `array_filter` + `array_find_key` 精确报告首个失败的校验器序号。
+
+### 组合校验谓词
+
+```php
+use Kode\Event\Event;
+use Kode\Event\EventPredicates;
+
+$adult = fn(Event $e): bool => ($e->get('age') ?? 0) >= 18;
+$vip   = fn(Event $e): bool => ($e->get('vip') ?? false) === true;
+
+$gate = EventPredicates::all($adult, $vip); // 同时满足
+$gate(new Event('x', ['age' => 20, 'vip' => true])); // true
+```
+
+### 详细校验结果
+
+```php
+use Kode\Event\EventSchema;
+use Kode\Event\EventSchemaRegistry;
+
+$registry = new EventSchemaRegistry();
+$registry->register(
+    EventSchema::create('user.created')->required('user_id', 'int')
+);
+
+$result = $registry->validateDetailed(
+    new Event('user.created', ['user_id' => 1]),
+    new Event('user.created', []), // 缺少 user_id
+);
+
+$result->allValid;  // false
+$result->failures;  // ['user.created' => '缺少必填字段 user_id']
 ```
 
 ## PHP 8.5 特性

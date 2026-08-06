@@ -14,8 +14,12 @@ class EventSchema
 
     protected array $types = [];
 
-    /** @var callable|null */
-    protected $validator = null;
+    /**
+     * 自定义校验规则（多个规则之间为 AND 关系）
+     *
+     * @var array<int, callable(Event): bool>
+     */
+    protected array $rules = [];
 
     public function __construct(string $eventName)
     {
@@ -51,12 +55,24 @@ class EventSchema
     }
 
     /**
+     * 追加一条自定义校验规则（多条规则之间为 AND 关系）
+     *
+     * @param callable(Event): bool $rule
+     */
+    public function addRule(callable $rule): self
+    {
+        $this->rules[] = $rule;
+        return $this;
+    }
+
+    /**
+     * 设置自定义校验规则（兼容旧写法，等价于追加一条规则）
+     *
      * @param callable(Event): bool $validator
      */
     public function validate(callable $validator): self
     {
-        $this->validator = $validator;
-        return $this;
+        return $this->addRule($validator);
     }
 
     public function validateEvent(Event $event): bool
@@ -80,11 +96,45 @@ class EventSchema
             }
         }
 
-        if ($this->validator !== null) {
-            return ($this->validator)($event);
+        // 多条自定义规则统一以「全部通过」判定，底层使用 PHP 8.4 array_all
+        // （8.3 上由 Php84Functions 提供语义一致的 polyfill）
+        if ($this->rules !== []) {
+            return array_all($this->rules, static fn(callable $rule): bool => $rule($event));
         }
 
         return true;
+    }
+
+    /**
+     * 返回首个未通过原因，全部通过时返回 null
+     *
+     * 便于在批量校验失败时给出可读的诊断信息。
+     */
+    public function explain(Event $event): ?string
+    {
+        if ($event->getName() !== $this->eventName) {
+            return sprintf('事件名不匹配（期望 %s，实际 %s）', $this->eventName, $event->getName());
+        }
+
+        foreach ($this->required as $field) {
+            if (!$event->has($field)) {
+                return sprintf('缺少必填字段 %s', $field);
+            }
+        }
+
+        foreach ($this->types as $field => $type) {
+            if ($event->has($field) && !$this->checkType($event->get($field), $type)) {
+                return sprintf('字段 %s 类型错误（期望 %s）', $field, $type);
+            }
+        }
+
+        foreach ($this->rules as $index => $rule) {
+            if (!$rule($event)) {
+                return sprintf('自定义规则 #%d 未通过', $index);
+            }
+        }
+
+        return null;
     }
 
     protected function checkType(mixed $value, string $type): bool
@@ -148,6 +198,64 @@ class EventSchemaRegistry
         }
 
         return $schema->validateEvent($event);
+    }
+
+    /**
+     * 返回首个未通过校验的事件（无失败则返回 null）
+     *
+     * 基于 PHP 8.4 array_find（8.3 上由 Php84Functions 提供 polyfill）实现，
+     * 适合在批量派发前快速定位首个非法事件。
+     */
+    public function findFirstInvalid(Event ...$events): ?Event
+    {
+        return array_find(
+            $events,
+            fn(Event $event): bool => !$this->validate($event)
+        );
+    }
+
+    /**
+     * 返回首个未通过校验的事件名称（无失败则返回 null）
+     *
+     * 基于 PHP 8.4 array_find_key。
+     */
+    public function findFirstInvalidName(Event ...$events): ?string
+    {
+        $index = array_find_key(
+            $events,
+            fn(Event $event): bool => !$this->validate($event)
+        );
+
+        return $index === null ? null : $events[$index]->getName();
+    }
+
+    /**
+     * 对一批事件做详细校验，返回结构化结果
+     *
+     * 对每个未通过校验的事件，尝试给出可读的失败原因（由对应 {@see EventSchema::explain()}
+     * 提供）；未注册 schema 的事件视为通过。
+     */
+    public function validateDetailed(Event ...$events): ValidationResult
+    {
+        $failures = [];
+        $passed = 0;
+
+        foreach ($events as $event) {
+            if ($this->validate($event)) {
+                $passed++;
+                continue;
+            }
+
+            $schema = $this->get($event->getName());
+            $reason = $schema !== null ? $schema->explain($event) : '未通过校验';
+
+            $failures[$event->getName()] = $reason ?? '未通过校验';
+        }
+
+        $total = count($events);
+        $failed = $total - $passed;
+
+        return new ValidationResult($failed === 0, $failures, $total, $passed, $failed);
     }
 
     /**

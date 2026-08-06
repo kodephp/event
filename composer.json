@@ -11,7 +11,7 @@
         "coroutine",
         "aspect-oriented"
     ],
-    "version": "1.9.0",
+    "version": "1.10.0",
     "authors": [
         {
             "name": "KodePHP Team"
@@ -28,7 +28,10 @@
     "autoload": {
         "psr-4": {
             "Kode\\Event\\": "src/"
-        }
+        },
+        "files": [
+            "src/Php84Functions.php"
+        ]
     },
     "suggest": {
         "kode/queue": "异步事件队列支持",

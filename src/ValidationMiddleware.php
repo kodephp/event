@@ -48,6 +48,10 @@ class ValidationMiddleware implements EventMiddlewareInterface
     /**
      * 处理事件
      *
+     * 先以 array_filter 筛出与当前事件名匹配的规则模式（精确名或通配符），
+     * 再对每条规则的校验器集合用 array_all 判定「全部通过」，并用 array_find_key
+     * 定位首个未通过的校验器序号，从而给出精确的诊断信息。
+     *
      * @throws InvalidEventException 校验不通过时抛出
      */
     #[\Override]
@@ -55,17 +59,23 @@ class ValidationMiddleware implements EventMiddlewareInterface
     {
         $name = $event->getName();
 
-        foreach ($this->rules as $pattern => $validators) {
-            if ($pattern !== $name && !EventHelper::matchesPattern($name, $pattern)) {
-                continue;
-            }
+        $matching = array_filter(
+            $this->rules,
+            static fn(array $validators, string $pattern): bool
+                => $pattern === $name || EventHelper::matchesPattern($name, $pattern),
+            ARRAY_FILTER_USE_BOTH
+        );
 
-            foreach ($validators as $index => $validator) {
-                if (!$validator($event)) {
-                    throw new InvalidEventException(
-                        sprintf('事件 %s 未通过校验规则 [%s#%d]', $name, $pattern, $index)
-                    );
-                }
+        foreach ($matching as $pattern => $validators) {
+            $failedIndex = array_find_key(
+                $validators,
+                static fn(callable $validator): bool => !$validator($event)
+            );
+
+            if ($failedIndex !== null) {
+                throw new InvalidEventException(
+                    sprintf('事件 %s 未通过校验规则 [%s#%d]', $name, $pattern, $failedIndex)
+                );
             }
         }
 
