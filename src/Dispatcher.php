@@ -6,6 +6,7 @@ namespace Kode\Event;
 
 use Kode\Event\Exception\EventDispatchException;
 use Kode\Event\Exception\PropagationException;
+use Kode\Event\DistributedEventTracer;
 use Psr\EventDispatcher\EventDispatcherInterface as PsrEventDispatcherInterface;
 use Psr\EventDispatcher\ListenerProviderInterface;
 use Psr\EventDispatcher\StoppableEventInterface as PsrStoppableEventInterface;
@@ -75,6 +76,14 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
      * 运行指标采集器
      */
     protected ?DispatcherStats $stats = null;
+
+    /**
+     * 可选的分布式链路追踪器
+     *
+     * 注入后，每次派发的 Event 会自动携带 W3C traceparent（当前无活动链路时自动开启），
+     * 便于事件在异步队列 / RPC 边界串联完整调用链。
+     */
+    protected ?DistributedEventTracer $tracer = null;
 
     /**
      * 构造事件调度器
@@ -204,6 +213,8 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
             throw PropagationException::maxDepthExceeded($name, $this->maxDepth);
         }
 
+        $this->attachTrace($event);
+
         $this->depth++;
         $startedAt = hrtime(true);
         $errors = [];
@@ -295,6 +306,8 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
         if ($this->depth >= $this->maxDepth) {
             throw PropagationException::maxDepthExceeded($name, $this->maxDepth);
         }
+
+        $this->attachTrace($event);
 
         $this->depth++;
         $startedAt = hrtime(true);
@@ -458,6 +471,32 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     }
 
     // ------------------------------------------------------------------
+    // 分布式链路追踪
+    // ------------------------------------------------------------------
+
+    /**
+     * 注入可选的分布式链路追踪器
+     *
+     * 注入后，每次派发的 {@see Event} 会自动携带 W3C traceparent（当前无活动链路时
+     * 自动开启一条），使事件在异步队列 / RPC 边界仍能串起完整调用链。
+     *
+     * @return $this
+     */
+    public function setTracer(DistributedEventTracer $tracer): static
+    {
+        $this->tracer = $tracer;
+        return $this;
+    }
+
+    /**
+     * 获取已注入的分布式链路追踪器（未注入则为 null）
+     */
+    public function getTracer(): ?DistributedEventTracer
+    {
+        return $this->tracer;
+    }
+
+    // ------------------------------------------------------------------
     // 查询
     // ------------------------------------------------------------------
 
@@ -540,6 +579,16 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     protected function describe(object $event): string
     {
         return $event instanceof NamedEventInterface ? $event->getName() : $event::class;
+    }
+
+    /**
+     * 若注入了分布式追踪器，则把 W3C traceparent 注入当前 Event（仅对 Event 实例生效）。
+     */
+    protected function attachTrace(object $event): void
+    {
+        if ($event instanceof Event && $this->tracer !== null) {
+            $this->tracer->propagate($event);
+        }
     }
 
     /**

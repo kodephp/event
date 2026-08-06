@@ -113,4 +113,19 @@ class DistributedEventTracerTest extends TestCase
         $this->assertSame('done', $result);
         $this->assertTrue($event->has('traceparent'));
     }
+
+    public function testPropagateStartsTraceWhenNoneAndInjects(): void
+    {
+        $tracer = new DistributedEventTracer();
+        $this->assertNull($tracer->getTraceparent());
+
+        $event = new Event('order.shipped', ['id' => 7]);
+        $traceparent = $tracer->propagate($event);
+
+        $this->assertIsString($traceparent);
+        $this->assertTrue($event->has('traceparent'));
+        $this->assertSame($traceparent, $event->get('traceparent'));
+        // 已自动开启活动链路
+        $this->assertNotNull($tracer->getTraceparent());
+    }
 }

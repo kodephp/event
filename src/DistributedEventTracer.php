@@ -74,6 +74,25 @@ class DistributedEventTracer
     }
 
     /**
+     * 确保存在进行中的链路追踪，并将 W3C traceparent 注入事件，
+     * 使事件在序列化 / 跨边界派发时自动携带链路上下文。
+     *
+     * 若当前尚无活动链路，会先 {@see self::startTrace()} 开启一条。
+     *
+     * @return string|null 注入后的 traceparent；若活动链路不可用且无法创建则为 null
+     */
+    public function propagate(Event $event): ?string
+    {
+        if ($this->getTraceparent() === null) {
+            $this->startTrace();
+        }
+
+        $this->injectToEvent($event);
+
+        return $this->getTraceparent();
+    }
+
+    /**
      * 返回当前 W3C traceparent；若尚未开启追踪则为 null。
      */
     public function getTraceparent(): ?string

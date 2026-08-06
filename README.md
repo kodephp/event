@@ -30,7 +30,7 @@
 ## 环境要求
 
 - PHP >= 8.3
-- `kode/context` ^2.0（必须）
+- `kode/context` ^3.1（必须）
 
 ## 安装
 
@@ -817,6 +817,38 @@ $tracer->getTraceInfo();    // ['trace_id' => ..., 'span_id' => ..., ...]
 `KodeContext::transaction()` 事务作用域自动回滚。
 
 > 要求 `kode/context: ^3.1`（已随本版本将依赖下限由 `^2.0` 提升至 `^3.1`）。
+
+#### 自动接线到 Dispatcher
+
+将 `DistributedEventTracer` 注入 {@see Dispatcher} 后，每次派发的 `Event` 会**自动携带**
+W3C `traceparent`（当前无活动链路时自动开启一条），无需在业务代码里手动 `injectToEvent`。
+类型化事件对象（非 `Event` 实例）不会被注入，保持原样。
+
+```php
+use Kode\Event\Dispatcher;
+use Kode\Event\DistributedEventTracer;
+
+$dispatcher = new Dispatcher();
+$dispatcher->setTracer(new DistributedEventTracer());
+
+$dispatcher->listen('order.created', function (\Kode\Event\Event $event) {
+    // 事件已自动携带 traceparent，可直接 toJson() 入队
+});
+
+$dispatcher->dispatch('order.created', ['id' => 42]);
+```
+
+#### `DistributedEventTracer` API
+
+| 方法 | 说明 |
+| --- | --- |
+| `startTrace(?string $traceId, ?string $nodeId): string` | 开启新链路，返回 32 位 trace_id |
+| `injectToEvent(Event $event): array` | 将当前 W3C 头部注入事件（`traceparent` / `tracestate`） |
+| `extractFromEvent(Event $event): bool` | 从事件恢复链路（消费端），成功返回 true |
+| `propagate(Event $event): ?string` | 确保链路存在并注入事件，返回 traceparent |
+| `getTraceparent(): ?string` | 当前 W3C traceparent |
+| `getTraceInfo(): array` | 当前链路信息（`trace_id` / `span_id` / `flags` 等） |
+| `trace(Event $event, callable $cb): mixed` | 在一条跨度内派发事件并执行回调 |
 
 ## 批量事件
 
