@@ -18,6 +18,7 @@ require __DIR__ . '/../vendor/autoload.php';
 use Kode\Event\DeferredDispatcher;
 use Kode\Event\Dispatcher;
 use Kode\Event\Event;
+use Kode\Event\FileEventStore;
 use Kode\Event\ListenerRegistry;
 
 /**
@@ -357,6 +358,68 @@ $results['object_dispatch_warm'] = bench('对象事件 热缓存 派发', 500_00
     })();
     $d->dispatch(new BenchConcreteOrder());
 });
+
+// ------------------------------------------------------------------
+// 9. 事件溯源 FileEventStore 崩溃恢复（截断末行 + 重载校验）
+// ------------------------------------------------------------------
+section('9. FileEventStore 崩溃恢复');
+
+$n = 50_000;
+$tmpFile = sys_get_temp_dir() . '/kode_event_bench_store_' . getmypid() . '.jsonl';
+@unlink($tmpFile);
+
+// 9a. 批量写入 N 个事件（单次追加原子写）
+$writeMs = (static function () use ($tmpFile, $n): float {
+    $store = new FileEventStore($tmpFile);
+    $start = hrtime(true);
+    for ($i = 0; $i < $n; $i++) {
+        $store->append(new Event('evt.' . ($i % 50), ['i' => $i]));
+    }
+    return (hrtime(true) - $start) / 1e6;
+})();
+printf("  %-42s %10.3f ms (%d 条)\n", "写入 {$n} 事件", $writeMs, $n);
+
+// 9b. 模拟崩溃：在文件末尾追加一条「被截断的半行 JSON」后进程中断
+file_put_contents($tmpFile, "{\"seq\":{$n}, \"id\":\"evt-corrupt\", \"name\":\"evt.broken\"\n", FILE_APPEND);
+
+// 9c. 全新实例重载：必须跳过损坏末行并重建出 N 条有效事件
+$recoverMs = (static function () use ($tmpFile, $n): float {
+    $start = hrtime(true);
+    $reloaded = new FileEventStore($tmpFile);
+    $count = $reloaded->count();
+    $elapsed = (hrtime(true) - $start) / 1e6;
+    // 断言：损坏末行被跳过，有效事件数仍为 N
+    if ($count !== $n) {
+        fwrite(STDERR, "  崩溃恢复校验失败：期望 {$n} 条，实际 {$count} 条\n");
+    }
+    return $elapsed;
+})();
+printf("  %-42s %10.3f ms (恢复 %d 条，跳过损坏末行)\n", "重载恢复（跳过截断行）", $recoverMs, $n);
+
+// 9d. 干净文件重载吞吐（无损坏行，作为基线对照）
+$cleanMs = (static function () use ($tmpFile, $n): float {
+    // 去掉损坏末行，得到干净文件
+    $lines = file($tmpFile, FILE_IGNORE_NEW_LINES);
+    array_pop($lines); // 去掉截断行
+    $cleanFile = $tmpFile . '.clean';
+    file_put_contents($cleanFile, implode("\n", $lines) . "\n");
+    $start = hrtime(true);
+    $store = new FileEventStore($cleanFile);
+    $c = $store->count();
+    $elapsed = (hrtime(true) - $start) / 1e6;
+    @unlink($cleanFile);
+    if ($c !== $n) {
+        fwrite(STDERR, "  干净重载校验失败：期望 {$n} 条，实际 {$c} 条\n");
+    }
+    return $elapsed;
+})();
+printf("  %-42s %10.3f ms (干净基线 %d 条)\n", "重载（无损坏行基线）", $cleanMs, $n);
+
+$results['file_store_write'] = ['title' => "FileEventStore 写入×{$n}", 'ops' => $n, 'ms' => $writeMs, 'ops_per_sec' => $writeMs > 0 ? $n / ($writeMs / 1000) : 0];
+$results['file_store_recover'] = ['title' => "FileEventStore 崩溃恢复×{$n}", 'ops' => $n, 'ms' => $recoverMs, 'ops_per_sec' => $recoverMs > 0 ? $n / ($recoverMs / 1000) : 0];
+$results['file_store_clean'] = ['title' => "FileEventStore 干净重载×{$n}", 'ops' => $n, 'ms' => $cleanMs, 'ops_per_sec' => $cleanMs > 0 ? $n / ($cleanMs / 1000) : 0];
+
+@unlink($tmpFile);
 
 echo "\n完成。\n";
 

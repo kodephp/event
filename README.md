@@ -815,6 +815,17 @@ $dispatcher->listen('order.paid', new RetryListener(
 ));
 
 // 重试耗尽：事件被投递到 $sink 并「吞掉」异常；未配置 deadLetter 则重抛，交调度器 ErrorStrategy 裁决
+
+// 退避抖动（jitter，0~1）：在基础退避上叠加 ±jitter 的随机扰动，缓解大量失败时的「重试惊群」
+// 实际退避 = 基础退避 × (1 ± jitter 随机扰动)；可用 setRng() 注入确定性随机源以便单元测试
+$retry = new RetryListener(
+    static fn (Event $e) => null,
+    'order.paid',
+    maxAttempts: 5,
+    backoff: static fn (int $attempt): int => 2 ** $attempt * 100,
+    jitter: 0.3, // ±30%
+    deadLetter: $sink
+);
 ```
 
 `DeadLetterSinkInterface` 提供 `InMemoryDeadLetterSink`（进程内暂存，便于排查）与
@@ -1777,6 +1788,11 @@ v1.15.0 在 v1.14.0 基础上叠加了「惰性排序 / 切面匹配缓存 / 类
 - 首要收益是「解析逻辑单一来源」——后续对 `getListeners` 的修复与优化自动覆盖对象事件路径。
 
 效果（PHP 8.3.33，对象事件深层级重复派发）：热缓存路径 ≈ 1.59M ops/sec，与重构前持平略优；冷启动因基准每次重建 registry 不具生产代表性。
+
+### v1.21.0 增强：退避抖动 + 事件溯源崩溃恢复
+
+- **退避抖动（jitter）**：`RetryListener` 新增 `jitter`（0~1 比例）参数，实际退避 = 基础退避 × (1 ± jitter 随机扰动)，缓解大量失败时的「重试惊群」；提供 `setRng()` 注入确定性随机源以便测试，并校验 jitter∈[0,1]。纯计算增强，不引入额外 I/O 或阻塞（`computeDelay()` 可单测）。
+- **事件溯源崩溃恢复压测**：`FileEventStore` 单写入者场景下，写入 5 万事件后模拟崩溃（截断末行半行 JSON），全新实例重载跳过损坏行并重建出全部 5 万条有效事件；恢复耗时 41.4 ms vs 干净基线 41.9 ms，损坏行跳过几乎零开销。
 
 ### 性能注意事项
 

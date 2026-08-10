@@ -161,6 +161,58 @@ final class RetryDeadLetterTest extends TestCase
         new RetryListener(static fn (Event $e) => null, 'x', maxAttempts: 0);
     }
 
+    public function testJitterZeroYieldsExactBackoff(): void
+    {
+        $retry = new RetryListener(
+            static fn (Event $e) => null,
+            'order.paid',
+            backoff: 100,
+            jitter: 0.0
+        );
+
+        $this->assertSame(100, $retry->computeDelay(1));
+        $this->assertSame(100, $retry->computeDelay(2));
+    }
+
+    public function testJitterStaysWithinBounds(): void
+    {
+        // 注入确定性随机数源：[0,1) 两端极值覆盖 ±jitter 边界
+        $retry = new RetryListener(
+            static fn (Event $e) => null,
+            'order.paid',
+            backoff: 100,
+            jitter: 0.5
+        );
+        $retry->setRng(static fn (): float => 0.0);   // factor = 1 - 0.5 = 0.5 → 50ms
+        $this->assertSame(50, $retry->computeDelay(1));
+
+        $retry->setRng(static fn (): float => 0.999999); // factor ≈ 1 + 0.499999 → 150ms
+        $this->assertSame(150, $retry->computeDelay(1));
+
+        $retry->setRng(static fn (): float => 0.5);   // factor = 1.0 → 100ms
+        $this->assertSame(100, $retry->computeDelay(1));
+    }
+
+    public function testJitterAppliesToCallableBackoff(): void
+    {
+        $retry = new RetryListener(
+            static fn (Event $e) => null,
+            'order.paid',
+            backoff: static fn (int $attempt): int => $attempt * 200, // attempt1=200, attempt2=400
+            jitter: 0.25
+        );
+        $retry->setRng(static fn (): float => 0.0); // factor = 0.75
+
+        $this->assertSame(150, $retry->computeDelay(1)); // 200 * 0.75
+        $this->assertSame(300, $retry->computeDelay(2)); // 400 * 0.75
+    }
+
+    public function testJitterRejectsOutOfRange(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new RetryListener(static fn (Event $e) => null, 'order.paid', jitter: 1.5);
+    }
+
     public function testCallbackDeadLetterSinkInvoked(): void
     {
         $captured = null;

@@ -25,6 +25,7 @@ use Throwable;
  * 设计要点：
  * - 每次重试都把同一个 $event 交给被包裹监听器，要求监听器具备幂等性；
  * - 退避 $backoff 可为固定毫秒数，或 `callable(int $attempt): int`（按第几次尝试计算）；
+ * - 退避抖动 $jitter（0~1 的比例）在基础退避上叠加 ±jitter 的随机扰动，用于避免重试风暴中的「惊群效应」；
  * - 自身实现 {@see ListenerInterface}，因此可直接用 `$dispatcher->listen()` 注册，
  *   并与一次性监听器、优先级、通配符等既有能力无缝协作。
  */
@@ -54,6 +55,18 @@ final class RetryListener implements ListenerInterface
     private $backoff;
 
     /**
+     * 退避抖动比例（0~1）：实际退避 = 基础退避 × (1 ± jitter 随机扰动)
+     */
+    private float $jitter;
+
+    /**
+     * 随机数源（返回 [0,1) 浮点），可注入以便测试；默认使用 {@see random_int}
+     *
+     * @var (callable():float)|null
+     */
+    private $rng = null;
+
+    /**
      * 死信接收器（可选）
      */
     private ?DeadLetterSinkInterface $deadLetter;
@@ -64,6 +77,7 @@ final class RetryListener implements ListenerInterface
      * @param int $priority 优先级（callable 时生效；ListenerInterface 时从其派生）
      * @param int $maxAttempts 最大尝试次数（含首次），至少 1
      * @param int|callable $backoff 退避：固定毫秒数或 `callable(int $attempt): int`
+     * @param float $jitter 退避抖动比例（0~1），在基础退避上叠加 ±jitter 的随机扰动
      * @param DeadLetterSinkInterface|null $deadLetter 死信接收器（可选）
      */
     public function __construct(
@@ -72,11 +86,13 @@ final class RetryListener implements ListenerInterface
         int $priority = 0,
         int $maxAttempts = 3,
         int|callable $backoff = 0,
+        float $jitter = 0.0,
         ?DeadLetterSinkInterface $deadLetter = null
     ) {
         $this->listener = $listener;
         $this->maxAttempts = $maxAttempts;
         $this->backoff = $backoff;
+        $this->jitter = $jitter;
         $this->deadLetter = $deadLetter;
         if ($this->listener instanceof ListenerInterface) {
             $this->events = $this->listener->events();
@@ -92,6 +108,21 @@ final class RetryListener implements ListenerInterface
         if ($this->maxAttempts < 1) {
             throw new \InvalidArgumentException('maxAttempts 至少为 1');
         }
+        if ($this->jitter < 0.0 || $this->jitter > 1.0) {
+            throw new \InvalidArgumentException('jitter 必须在 0~1 之间');
+        }
+    }
+
+    /**
+     * 注入确定性随机数源（[0,1)），主要用于测试；不传则使用 {@see random_int}
+     *
+     * @param callable():float $rng
+     * @return $this
+     */
+    public function setRng(callable $rng): self
+    {
+        $this->rng = $rng;
+        return $this;
     }
 
     #[\Override]
@@ -148,13 +179,34 @@ final class RetryListener implements ListenerInterface
     }
 
     /**
-     * 按退避策略休眠（backoff <= 0 时不休眠）
+     * 计算第 $attempt 次失败后、下一次重试前的退避毫秒数（含抖动）。
+     *
+     * 基础退避来自 $backoff（固定毫秒或 callable）；若配置了 $jitter（0~1），
+     * 实际退避 = 基础退避 × (1 + (r·2−1)·jitter)，其中 r∈[0,1) 来自随机数源，
+     * 从而落在 [基础×(1−jitter), 基础×(1+jitter)] 区间，缓解重试惊群。
+     */
+    public function computeDelay(int $attempt): int
+    {
+        $base = is_callable($this->backoff)
+            ? (int) ($this->backoff)($attempt)
+            : $this->backoff;
+
+        if ($base <= 0 || $this->jitter <= 0.0) {
+            return max(0, $base);
+        }
+
+        $r = $this->rng !== null ? ($this->rng)() : (random_int(0, 1_000_000) / 1_000_000);
+        $delay = (int) round($base * (1.0 + ($r * 2.0 - 1.0) * $this->jitter));
+
+        return max(0, $delay);
+    }
+
+    /**
+     * 按退避策略休眠（computeDelay <= 0 时不休眠）
      */
     private function sleep(int $attempt): void
     {
-        $ms = is_callable($this->backoff)
-            ? (int) ($this->backoff)($attempt)
-            : $this->backoff;
+        $ms = $this->computeDelay($attempt);
 
         if ($ms > 0) {
             usleep($ms * 1000);
