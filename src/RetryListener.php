@@ -26,6 +26,8 @@ use Throwable;
  * - 每次重试都把同一个 $event 交给被包裹监听器，要求监听器具备幂等性；
  * - 退避 $backoff 可为固定毫秒数，或 `callable(int $attempt): int`（按第几次尝试计算）；
  * - 退避抖动 $jitter（0~1 的比例）在基础退避上叠加 ±jitter 的随机扰动，用于避免重试风暴中的「惊群效应」；
+ * - 提供 {@see exponentialBackoff()}（指数退避 + 上限）与 {@see decorrelatedJitterBackoff()}
+ *   （AWS 风格去相关抖动）两个静态工厂，直接作为 $backoff 参数使用；
  * - 自身实现 {@see ListenerInterface}，因此可直接用 `$dispatcher->listen()` 注册，
  *   并与一次性监听器、优先级、通配符等既有能力无缝协作。
  */
@@ -111,6 +113,73 @@ final class RetryListener implements ListenerInterface
         if ($this->jitter < 0.0 || $this->jitter > 1.0) {
             throw new \InvalidArgumentException('jitter 必须在 0~1 之间');
         }
+    }
+
+    /**
+     * 指数退避工厂：返回 `callable(int $attempt): int`
+     *
+     * 第 $attempt 次失败后的退避为 `base × factor ^ (attempt−1)`，并截断到 $capMs。
+     * 与 {@see RetryListener} 构造器的 $backoff 参数直接兼容：
+     *
+     * ```php
+     * new RetryListener($h, backoff: RetryListener::exponentialBackoff(100, 2.0, 5000));
+     * ```
+     *
+     * @param int $baseMs 基准退避（毫秒，第 1 次失败时）
+     * @param float $factor 增长因子（默认 2.0，即翻倍）
+     * @param int $capMs 退避上限（毫秒），用于防止退避无限膨胀
+     * @return callable(int):int
+     */
+    public static function exponentialBackoff(int $baseMs, float $factor = 2.0, int $capMs = PHP_INT_MAX): callable
+    {
+        if ($baseMs < 0) {
+            throw new \InvalidArgumentException('baseMs 必须 >= 0');
+        }
+        if ($factor <= 0.0) {
+            throw new \InvalidArgumentException('factor 必须 > 0');
+        }
+        if ($capMs < 0) {
+            throw new \InvalidArgumentException('capMs 必须 >= 0');
+        }
+
+        return static function (int $attempt) use ($baseMs, $factor, $capMs): int {
+            $raw = $baseMs * ($factor ** max(0, $attempt - 1));
+            // 大 attempt 下 $factor ** (attempt−1) 可能溢出为 INF，此时应截断到上限
+            if (!is_finite($raw) || $raw >= $capMs) {
+                return $capMs;
+            }
+            return max(0, (int) round($raw));
+        };
+    }
+
+    /**
+     * 去相关抖动退避工厂（AWS 风格 decorrelated jitter）：返回 `callable(int $attempt): int`
+     *
+     * - 第 1 次失败退避 $baseMs；
+     * - 后续每次退避 = `random($baseMs, $prev × 3)`，其中 $prev 为上一次实际退避。
+     *
+     * 相比纯指数退避，去相关抖动能让各重试者更快「错峰」，进一步缓解重试风暴的惊群效应；
+     * 退避同样截断到 $capMs。注意该策略内部使用随机源，行为不可由 {@see setRng()} 注入。
+     *
+     * @param int $baseMs 基准退避（毫秒）
+     * @param int $capMs 退避上限（毫秒）
+     * @return callable(int):int
+     */
+    public static function decorrelatedJitterBackoff(int $baseMs = 100, int $capMs = 10000): callable
+    {
+        if ($baseMs < 0) {
+            throw new \InvalidArgumentException('baseMs 必须 >= 0');
+        }
+        if ($capMs < 0) {
+            throw new \InvalidArgumentException('capMs 必须 >= 0');
+        }
+
+        $prev = $baseMs;
+        return static function (int $attempt) use ($baseMs, $capMs, &$prev): int {
+            $sleep = $attempt <= 1 ? $baseMs : random_int($baseMs, $prev * 3);
+            $prev = $sleep;
+            return min($capMs, max(0, $sleep));
+        };
     }
 
     /**

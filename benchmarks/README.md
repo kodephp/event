@@ -189,6 +189,18 @@ v1.20.0 将对象事件 / NamedEvent 的监听器解析统一收敛到 `getListe
 
 > `stream()` 为超大日志重放提供 O(1) 内存路径，避免 `all()` 把整份日志物化；`appendBatch` 为快照回放 / 批量导入提供高吞吐写入。
 
+## v1.23.0 RetryListener 退避策略工厂（PHP 8.3.33）
+
+新增压测场景 `11`：`RetryListener` 装饰开销与 `exponentialBackoff` 序列生成吞吐（dispatch ×200,000）。
+
+| 场景 | 耗时 | 说明 |
+| --- | --- | --- |
+| 裸监听 dispatch ×200,000 | 66.4 ms | 基准 |
+| RetryListener 包裹（成功路径）×200,000 | 73.9 ms | 装饰开销约 11.4% |
+| exponentialBackoff 序列生成 ×1000 | 0.06 ms | 含 cap 截断校验 |
+
+> 两个静态工厂（`exponentialBackoff` / `decorrelatedJitterBackoff`）返回 `callable(int $attempt): int`，直接与既有固定毫秒 / 自定义 callable / jitter 组合；`exponentialBackoff` 在大 attempt 幂溢出时安全回落到 `capMs`，不出现 0 值退化。
+
 ## v1.17.0 优化对比（DeferredDispatcher::cancel O(1)，PHP 8.3.33）
 
 v1.17.0 将 `DeferredDispatcher::cancel()` 从「每次 `array_search` + `array_values` 重建 `order` 索引（O(n)）」

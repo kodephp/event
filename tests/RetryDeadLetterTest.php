@@ -213,6 +213,82 @@ final class RetryDeadLetterTest extends TestCase
         new RetryListener(static fn (Event $e) => null, 'order.paid', jitter: 1.5);
     }
 
+    public function testExponentialBackoffGrowsAndCaps(): void
+    {
+        $backoff = RetryListener::exponentialBackoff(100, 2.0, 5000);
+
+        // attempt 1..n：100, 200, 400, 800 … 受 cap=5000 截断
+        $this->assertSame(100, $backoff(1));
+        $this->assertSame(200, $backoff(2));
+        $this->assertSame(400, $backoff(3));
+        $this->assertSame(800, $backoff(4));
+
+        // 第 7 次本应为 6400，被截断到 5000
+        $this->assertSame(5000, $backoff(7));
+        // 后续维持上限
+        $this->assertSame(5000, $backoff(20));
+        // 极大值 attempt 下 $factor 幂溢出为 INF 时，必须截断到 cap 而非变成 0
+        $this->assertSame(5000, $backoff(1000));
+    }
+
+    public function testExponentialBackoffRejectsBadArgs(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RetryListener::exponentialBackoff(-1);
+    }
+
+    public function testDecorrelatedJitterBackoffStaysWithinBounds(): void
+    {
+        $base = 100;
+        $cap = 10000;
+        $backoff = RetryListener::decorrelatedJitterBackoff($base, $cap);
+
+        // attempt 1 始终返回 base，与随机源无关
+        $this->assertSame($base, $backoff(1));
+
+        // 连续多次尝试：每次结果都落在 [base, cap]，且不超过上限
+        for ($attempt = 2; $attempt <= 50; $attempt++) {
+            $value = $backoff($attempt);
+            $this->assertGreaterThanOrEqual($base, $value, "第 {$attempt} 次退避不应低于 base");
+            $this->assertLessThanOrEqual($cap, $value, "第 {$attempt} 次退避不应超过 cap");
+        }
+
+        $this->assertIsCallable($backoff);
+    }
+
+    public function testDecorrelatedJitterBackoffRejectsBadArgs(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RetryListener::decorrelatedJitterBackoff(-5);
+    }
+
+    public function testExponentialBackoffWorksEndToEndWithRetry(): void
+    {
+        $dispatcher = new Dispatcher();
+        $sink = new InMemoryDeadLetterSink();
+        $calls = 0;
+
+        // 指数退避作为 backoff，jitter=0 便于预测；监听器始终失败 → 重抛耗尽 → 进死信
+        $listener = new RetryListener(
+            static function (Event $e) use (&$calls): void {
+                $calls++;
+                throw new \RuntimeException('boom');
+            },
+            'order.paid',
+            maxAttempts: 3,
+            backoff: RetryListener::exponentialBackoff(10, 2.0),
+            jitter: 0.0,
+            deadLetter: $sink
+        );
+        $dispatcher->listen('order.paid', $listener);
+
+        $dispatcher->dispatch('order.paid');
+
+        // 3 次尝试后进入死信
+        $this->assertSame(3, $calls);
+        $this->assertCount(1, $sink->all());
+    }
+
     public function testCallbackDeadLetterSinkInvoked(): void
     {
         $captured = null;

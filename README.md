@@ -845,6 +845,32 @@ $retry = new RetryListener(
 );
 ```
 
+除了手写 `backoff` callable，也提供两个静态工厂，直接作为 `backoff` 参数使用：
+
+```php
+use Kode\Event\RetryListener;
+
+// 指数退避：100ms、200ms、400ms … 上限 5s；超大 attempt 幂溢出时安全回落到上限
+$dispatcher->listen('order.paid', new RetryListener(
+    $handler,
+    'order.paid',
+    maxAttempts: 8,
+    backoff: RetryListener::exponentialBackoff(100, 2.0, 5000),
+    deadLetter: $sink
+));
+
+// 去相关抖动退避（AWS 风格）：sleep = random(base, prev×3)，更快错峰，进一步缓解惊群
+$dispatcher->listen('order.shipped', new RetryListener(
+    $handler,
+    'order.shipped',
+    backoff: RetryListener::decorrelatedJitterBackoff(100, 10000),
+    deadLetter: $sink
+));
+```
+
+退避策略可与 `jitter` 叠加：工厂给出「基础退避」，jitter 在其上再做 ±扰动。
+
+
 `DeadLetterSinkInterface` 提供 `InMemoryDeadLetterSink`（进程内暂存，便于排查）与
 `CallbackDeadLetterSink`（转发到任意回调，便于接入消息队列 / 数据库 / 监控），
 死信条目由 `DeadLetterEntry`（事件 + 异常 + 尝试次数 + 移入时间戳）承载。
@@ -1815,6 +1841,15 @@ v1.15.0 在 v1.14.0 基础上叠加了「惰性排序 / 切面匹配缓存 / 类
 
 - `EventStoreInterface` 新增 `appendBatch()`（批量原子写入）与 `stream()`（生成器流式遍历，O(1) 内存），`FileEventStore` / `InMemoryEventStore` 双实现。
 - `appendBatch` 压测 20 万事件 **4190ms → 221ms（≈18.9×）**；`stream()` 峰值内存增量 **0 KB**（对照 `all()` 全量物化 ≈ 40 MB），适合超大日志重放 / 批量导入。
+
+### v1.23.0 增强：RetryListener 退避策略工厂
+
+新增两个静态工厂，直接作为 `RetryListener` 构造器的 `backoff` 参数（返回 `callable(int $attempt): int`），与固定毫秒 / 自定义 callable / jitter 无缝组合：
+
+- `RetryListener::exponentialBackoff($baseMs, $factor=2.0, $capMs=PHP_INT_MAX)`：指数退避 `base × factor^(attempt−1)`，截断到上限；**超大 attempt 下幂溢出为 INF 时安全回落到 `$capMs`**（而非被 `max(0,…)` 误算为 0）。
+- `RetryListener::decorrelatedJitterBackoff($baseMs=100, $capMs=10000)`：AWS 风格去相关抖动，`sleep = random(base, prev×3)`，让重试者更快错峰，进一步缓解重试惊群；退避同样截断到上限。
+
+压测（PHP 8.3.33，dispatch ×200,000）：`RetryListener` 成功路径装饰开销约 **11.4%**（裸监听 66.4ms → 包裹 73.9ms）；`exponentialBackoff` 生成 1000 次序列仅 0.06ms。
 
 ### 性能注意事项
 

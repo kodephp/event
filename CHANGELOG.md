@@ -2,6 +2,13 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.23.0
+- **RetryListener 退避策略工厂方法**：
+  - 新增 `RetryListener::exponentialBackoff(int $baseMs, float $factor=2.0, int $capMs=PHP_INT_MAX): callable` —— 指数退避（`base × factor^(attempt−1)`）并截断到上限，超大 attempt 下幂溢出时安全回落到 cap。
+  - 新增 `RetryListener::decorrelatedJitterBackoff(int $baseMs=100, int $capMs=10000): callable` —— AWS 风格去相关抖动退避（`sleep = random(base, prev×3)`），进一步错峰缓解重试惊群。
+  - 两者均返回 `callable(int $attempt): int`，直接作为 `RetryListener` 构造器的 `$backoff` 参数使用，与既有固定毫秒 / 自定义 callable / jitter 无缝组合。
+  - 配套测试覆盖增长、cap 截断、幂溢出边界、参数校验与端到端死信路径；压测显示成功路径装饰开销约 11%（裸 66.4ms → 包裹 73.9ms / 20 万次 dispatch）。
+
 ## v1.22.0
 - **FileEventStore 批量写入 + 流式加载（超大日志场景）**：
   - `EventStoreInterface` 新增 `appendBatch(array $entries)` 与 `stream(): \Generator`；`FileEventStore` / `InMemoryEventStore` 均实现。

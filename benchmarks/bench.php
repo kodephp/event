@@ -23,6 +23,7 @@ use Kode\Event\Dispatcher;
 use Kode\Event\Event;
 use Kode\Event\FileEventStore;
 use Kode\Event\ListenerRegistry;
+use Kode\Event\RetryListener;
 
 /**
  * 压测单例
@@ -486,6 +487,59 @@ $results['file_batch_single'] = ['title' => "FileEventStore 单条 append×{$big
 $results['file_batch_bulk'] = ['title' => "FileEventStore appendBatch×{$big}", 'ops' => $big, 'ms' => $batchMs, 'ops_per_sec' => $batchMs > 0 ? $big / ($batchMs / 1000) : 0];
 
 @unlink($bigFile);
+
+// 11. RetryListener 装饰开销 + 指数退避序列生成吞吐
+$iter = 200000;
+$retryOverhead = (static function () use ($iter): array {
+    $bare = new Dispatcher();
+    $bare->listen('ev', static function (Event $e): void {
+    });
+
+    $wrapped = new Dispatcher();
+    $wrapped->listen('ev', new RetryListener(
+        static function (Event $e): void {
+        },
+        'ev',
+        backoff: RetryListener::exponentialBackoff(100, 2.0, 5000)
+    ));
+
+    $e = new Event('ev');
+    $t = hrtime(true);
+    for ($i = 0; $i < $iter; $i++) {
+        $bare->dispatch($e);
+    }
+    $bareMs = (hrtime(true) - $t) / 1e6;
+
+    $t = hrtime(true);
+    for ($i = 0; $i < $iter; $i++) {
+        $wrapped->dispatch($e);
+    }
+    $wrappedMs = (hrtime(true) - $t) / 1e6;
+
+    return [$bareMs, $wrappedMs];
+})();
+printf("\n11. RetryListener 装饰开销（dispatch ×%d）\n", $iter);
+printf("  %-42s %10.3f ms\n", '裸监听 dispatch', $retryOverhead[0]);
+printf("  %-42s %10.3f ms\n", 'RetryListener 包裹（成功路径）', $retryOverhead[1]);
+printf("  %-42s %10.2f%%\n", '装饰开销（相对裸监听）', $retryOverhead[0] > 0 ? ($retryOverhead[1] / $retryOverhead[0] - 1) * 100 : 0);
+
+// 11b. 指数退避序列生成吞吐（含 cap 校验）
+$expCap = (static function () use ($iter): array {
+    $seq = RetryListener::exponentialBackoff(100, 2.0, 5000);
+    $t = hrtime(true);
+    $last = 0;
+    for ($i = 1; $i <= 1000; $i++) {
+        $last = $seq($i);
+    }
+    $genMs = (hrtime(true) - $t) / 1e6;
+    return [$genMs, $last];
+})();
+printf("\n11b. 指数退避序列生成（×1000 次，cap=5000）\n");
+printf("  %-42s %10.3f ms\n", 'exponentialBackoff 调用', $expCap[0]);
+printf("  %-42s %10d ms\n", '第 1000 次（应被 cap 截断）', $expCap[1]);
+
+$results['retry_overhead_bare'] = ['title' => "裸监听 dispatch×{$iter}", 'ops' => $iter, 'ms' => $retryOverhead[0], 'ops_per_sec' => $retryOverhead[0] > 0 ? $iter / ($retryOverhead[0] / 1000) : 0];
+$results['retry_overhead_wrapped'] = ['title' => "RetryListener 包裹 dispatch×{$iter}", 'ops' => $iter, 'ms' => $retryOverhead[1], 'ops_per_sec' => $retryOverhead[1] > 0 ? $iter / ($retryOverhead[1] / 1000) : 0];
 
 echo "\n完成。\n";
 
