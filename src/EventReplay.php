@@ -40,7 +40,9 @@ class EventReplay
     public function replayReverse(?int $count = null): array
     {
         $results = [];
-        $events = array_slice($this->events, -$count);
+        $events = $count === null
+            ? $this->events
+            : ($count <= 0 ? [] : array_slice($this->events, -$count));
 
         foreach (array_reverse($events) as $item) {
             $results[] = $this->replayOne($item['event']);

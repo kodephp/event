@@ -87,9 +87,11 @@ class DistributedEventTracer
             $this->startTrace();
         }
 
-        $this->injectToEvent($event);
+        // 复用 injectToEvent 返回的头部，避免再调一次 toTraceparent()，
+        // 将每次派发的上下文调用从两次降到一次
+        $headers = $this->injectToEvent($event);
 
-        return $this->getTraceparent();
+        return $headers['traceparent'] ?? null;
     }
 
     /**

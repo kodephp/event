@@ -53,6 +53,30 @@ class ListenerRegistry implements ListenerProviderInterface
     protected static array $regexCache = [];
 
     /**
+     * 按类名缓存的对象事件解析键（类名 + 父类链 + 接口）
+     *
+     * 类层级在运行时不可变，命中即免一次 class_parents / class_implements 全量解析。
+     *
+     * @var array<string, string[]>
+     */
+    protected static array $keysByClass = [];
+
+    /**
+     * 精确桶脏标记：注册后延迟到首次读取时排序，
+     * 避免「同事件大量注册」场景下每次 listen 都做 O(n log n) 排序（最坏 O(n²·log n)）。
+     *
+     * @var array<string, true>
+     */
+    protected array $dirtyExact = [];
+
+    /**
+     * 通配符桶脏标记
+     *
+     * @var array<string, true>
+     */
+    protected array $dirtyWildcard = [];
+
+    /**
      * 对象事件缓存键集合（仅用于 invalidateCache 精准失效，避免全表扫描 resolvedCache）
      *
      * @var array<string, true>
@@ -107,10 +131,10 @@ class ListenerRegistry implements ListenerProviderInterface
 
         if ($isWildcard) {
             $this->wildcardListeners[$event][] = $entry;
-            $this->sortBucket($this->wildcardListeners[$event]);
+            $this->dirtyWildcard[$event] = true;
         } else {
             $this->listeners[$event][] = $entry;
-            $this->sortBucket($this->listeners[$event]);
+            $this->dirtyExact[$event] = true;
         }
 
         $this->invalidateCache($isWildcard ? null : $event);
@@ -167,6 +191,12 @@ class ListenerRegistry implements ListenerProviderInterface
             unset($this->{$target}[$event]);
         }
 
+        if ($isWildcard) {
+            $this->dirtyWildcard[$event] = true;
+        } else {
+            $this->dirtyExact[$event] = true;
+        }
+
         $this->invalidateCache($isWildcard ? null : $event);
 
         return $this;
@@ -184,19 +214,29 @@ class ListenerRegistry implements ListenerProviderInterface
         }
 
         $resolved = $this->listeners[$event] ?? [];
+        // 精确桶在注册时仅标记 dirty，首次读取时排序一次（结果会进入 resolvedCache）
+        if (isset($this->dirtyExact[$event]) && count($resolved) >= 2) {
+            $this->sortBucket($resolved);
+            $this->dirtyExact[$event] = false;
+        }
         $wildcardHit = false;
 
         foreach ($this->wildcardListeners as $pattern => $entries) {
             if ($this->matchWildcard($event, $pattern)) {
                 $wildcardHit = true;
+                // 合并前先对脏的通配符桶排序一次
+                if (isset($this->dirtyWildcard[$pattern]) && count($entries) >= 2) {
+                    $this->sortBucket($entries);
+                    $this->dirtyWildcard[$pattern] = false;
+                    $this->wildcardListeners[$pattern] = $entries;
+                }
                 foreach ($entries as $entry) {
                     $resolved[] = $entry;
                 }
             }
         }
 
-        // 精确桶在注册时已排序；仅当命中通配符（合并了不同桶）才需要重新排序，
-        // 避免缓存未命中路径上对单桶结果做无谓的 usort
+        // 合并了不同桶时需要整体重排，保证优先级 / 注册顺序语义正确
         if ($wildcardHit) {
             $this->sortBucket($resolved);
         }
@@ -292,11 +332,11 @@ class ListenerRegistry implements ListenerProviderInterface
 
         $this->sortBucket($resolved);
 
-        // 存在外部提供者时不缓存，避免其动态增减导致结果过期
-        if ($this->providers === []) {
-            $cacheKey = $event instanceof NamedEventInterface ? $event->getName() : "\0obj\0" . $this->resolveObjectKeys($event)[0];
-            return $this->cache($cacheKey, $resolved);
-        }
+            // 存在外部提供者时不缓存，避免其动态增减导致结果过期
+            if ($this->providers === []) {
+                $cacheKey = $event instanceof NamedEventInterface ? $event->getName() : "\0obj\0" . $keys[0];
+                return $this->cache($cacheKey, $resolved);
+            }
 
         return $resolved;
     }
@@ -376,6 +416,8 @@ class ListenerRegistry implements ListenerProviderInterface
 
         $this->resolvedCache = [];
         $this->objectCacheKeys = [];
+        $this->dirtyExact = [];
+        $this->dirtyWildcard = [];
 
         return $this;
     }
@@ -463,11 +505,17 @@ class ListenerRegistry implements ListenerProviderInterface
     {
         $class = $event::class;
 
-        return array_values(array_unique(array_merge(
+        if (isset(self::$keysByClass[$class])) {
+            return self::$keysByClass[$class];
+        }
+
+        $keys = array_values(array_unique(array_merge(
             [$class],
             array_values(class_parents($event) ?: []),
             array_values(class_implements($event) ?: [])
         )));
+
+        return self::$keysByClass[$class] = $keys;
     }
 
     /**
@@ -583,7 +631,8 @@ class ListenerRegistry implements ListenerProviderInterface
         }
 
         if (count(self::$regexCache) >= self::MAX_CACHE_ENTRIES) {
-            self::$regexCache = [];
+            // FIFO 单条淘汰，避免缓存填满时周期性「整表清空 → 全部重编译」造成抖动
+            array_shift(self::$regexCache);
         }
 
         $regex = '/^' . str_replace(

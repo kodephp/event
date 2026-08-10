@@ -81,18 +81,18 @@ class EventSchema
             return false;
         }
 
+        // 快照一次业务数据，避免逐字段 has()/get() 的重复方法调用与查表
+        $data = $event->getData();
+
         foreach ($this->required as $field) {
-            if (!$event->has($field)) {
+            if (!array_key_exists($field, $data)) {
                 return false;
             }
         }
 
         foreach ($this->types as $field => $type) {
-            if ($event->has($field)) {
-                $value = $event->get($field);
-                if (!$this->checkType($value, $type)) {
-                    return false;
-                }
+            if (array_key_exists($field, $data) && !$this->checkType($data[$field], $type)) {
+                return false;
             }
         }
 
@@ -116,14 +116,17 @@ class EventSchema
             return sprintf('事件名不匹配（期望 %s，实际 %s）', $this->eventName, $event->getName());
         }
 
+        // 快照一次业务数据，避免逐字段 has()/get() 的重复方法调用与查表
+        $data = $event->getData();
+
         foreach ($this->required as $field) {
-            if (!$event->has($field)) {
+            if (!array_key_exists($field, $data)) {
                 return sprintf('缺少必填字段 %s', $field);
             }
         }
 
         foreach ($this->types as $field => $type) {
-            if ($event->has($field) && !$this->checkType($event->get($field), $type)) {
+            if (array_key_exists($field, $data) && !$this->checkType($data[$field], $type)) {
                 return sprintf('字段 %s 类型错误（期望 %s）', $field, $type);
             }
         }

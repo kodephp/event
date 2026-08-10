@@ -88,7 +88,8 @@ final class EventHelper
      */
     public static function buildName(string $prefix, string $name, string $suffix = ''): string
     {
-        $parts = array_filter([$prefix, $name, $suffix]);
+        // 仅丢弃空字符串段；保留 '"0"' 这类合法数字段名（裸 array_filter 会将 '0' 视为 falsy 丢弃）
+        $parts = array_values(array_filter([$prefix, $name, $suffix], static fn(string $p): bool => $p !== ''));
         return implode('.', $parts);
     }
 

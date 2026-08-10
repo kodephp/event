@@ -2,6 +2,32 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.15.0
+- **审计修复（5 项缺陷）**：
+  - BUG-1：`Dispatcher` 开启 `stats` 时，前置钩子抛异常不再被 `finally` 中的 `TypeError` 掩盖原始异常
+    （事件名改为在 `try` 之前即确定）。
+  - BUG-2：`AspectEventDispatcher::until()` 此前绕过切面，现已同样触发前后置切面（责任链场景不再静默失效）。
+  - BUG-3：`QueueDispatcher::processMany` 不再因队首毒丸任务（`process()` 返回 false）冻结整批消费，
+    改以队列 `size()` 判断「是否还有任务」决定是否继续。
+  - BUG-4：`EventReplay::replayReverse(0)` 不再因 `-0 === 0` 误重放全部事件。
+  - BUG-5：`EventHelper::buildName` 不再把数字段名 `'0'` 当作空值丢弃（改用仅过滤空字符串的回调）。
+- **性能优化（压测驱动，累计相对 v1.13.0 基线，PHP 8.3.33）**：
+  - `ListenerRegistry` 注册**惰性排序**：注册仅追加 + 打 `dirty` 标记，排序延迟到首次读取时执行一次，
+    消除同事件大量注册的 O(n²·log n) 排序开销（批量注册 2000 监听器 **+20.8%**、注册后派发 **+21.3%**）。
+  - `AspectEventDispatcher` **切面匹配缓存**：按事件名缓存命中的切入点，派发从「全切面 `preg_match`」降为
+    一次查表（`until` 短路 **+16.6%**、通配符派发 **+16.3%**）。
+  - `ListenerRegistry` **类层级缓存**（`$keysByClass`）+ 正则 **FIFO 单条淘汰**，免去重复 `class_parents` /
+    `class_implements` 解析、消除缓存填满时的周期性重编译抖动。
+  - `EventSchema` 校验时 **`getData()` 一次性快照**，替代逐字段 `has()` + `get()` 双次查表。
+  - `DeferredDispatcher::process` **有序延迟调度**：先收集到期任务、按 `dispatchAt` 升序派发，未到期任务保持不动，
+    避免整表 COW 复制，并修正延迟语义（delay 小的先触发）。
+  - `DistributedEventTracer::propagate` 复用 `injectToEvent` 返回头部，去掉一次多余 `toTraceparent()` 调用；
+    `Dispatcher` 指标采集懒计时（`stats` 关闭时不调用 `hrtime`）+ 循环前提炼「可停止传播」布尔。
+  - 大量不同事件名（缓存未命中密集）场景累计 **+93.3%**（1019 → 1969 ops/sec）。
+- **测试**：新增 `tests/AuditV115Test.php`（8 项 / 16 断言）覆盖上述全部修复与排序/切面缓存/延迟调度语义；
+  全量套件 **248 测试 / 573 断言全绿**（原 240 → 248）。
+- **文档**：`README.md` 与 `benchmarks/README.md` 新增 v1.15.0 优化对比表与优化点说明。
+
 ## v1.14.0
 - **性能优化（压测驱动）**：新增 `benchmarks/bench.php` 压测脚本与 `benchmarks/benchmark-baseline-v1.13.0.json`
   基线数据；在同机（PHP 8.3.33）对比验证。

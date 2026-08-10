@@ -23,6 +23,16 @@ class AspectEventDispatcher extends Dispatcher
     protected array $aspects = [];
 
     /**
+     * 按事件名缓存命中的切入点表达式列表
+     *
+     * 避免每次派发都对全部切面逐一跑正则匹配（切面多时为热路径主要开销）。
+     * 注册 / 注销切面时整体失效。
+     *
+     * @var array<string, string[]>
+     */
+    protected array $matchedPointcuts = [];
+
+    /**
      * 是否已初始化 AOP
      */
     protected static bool $aopInitialized = false;
@@ -47,6 +57,7 @@ class AspectEventDispatcher extends Dispatcher
         ];
 
         $this->sortAspects($pointcut);
+        $this->matchedPointcuts = [];
 
         return $this;
     }
@@ -68,6 +79,8 @@ class AspectEventDispatcher extends Dispatcher
                 )
             );
         }
+
+        $this->matchedPointcuts = [];
 
         return $this;
     }
@@ -105,6 +118,40 @@ class AspectEventDispatcher extends Dispatcher
     }
 
     /**
+     * 短路派发（带 AOP 切面）
+     *
+     * 基类 {@see Dispatcher::until()} 不走 dispatch，故需在此同样触发前后置切面，
+     * 否则 until 场景下的切面会静默失效。
+     *
+     * @param object|string $event 事件对象或事件名称
+     * @param array<string, mixed> $data 事件数据
+     * @return mixed 首个非 null 返回值，全部为 null 时返回 null
+     */
+    #[\Override]
+    public function until(object|string $event, array $data = []): mixed
+    {
+        $event = is_string($event) ? new Event($event, $data) : $event;
+
+        if ($event instanceof Event) {
+            $this->triggerBeforeAspects($event);
+
+            if ($event->isPropagationStopped()) {
+                return null;
+            }
+        }
+
+        // 真正的短路派发统一委托给基类（深度保护 / 异常策略 / 钩子 / 外部 PSR-14 提供者
+        // / 指标统计 / 链路追踪），避免切面调度器丢失这些能力
+        $result = parent::until($event, $event instanceof Event ? $event->getData() : $data);
+
+        if ($event instanceof Event) {
+            $this->triggerAfterAspects($event);
+        }
+
+        return $result;
+    }
+
+    /**
      * 触发前置通知切面
      *
      * @param Event $event
@@ -112,11 +159,9 @@ class AspectEventDispatcher extends Dispatcher
      */
     protected function triggerBeforeAspects(Event $event): void
     {
-        foreach ($this->aspects as $pointcut => $aspects) {
-            if ($this->matchesPointcut($event->getName(), $pointcut)) {
-                foreach ($aspects as $item) {
-                    $this->invokeBeforeAspect($item['aspect'], $event);
-                }
+        foreach ($this->getMatchedPointcuts($event->getName()) as $pointcut) {
+            foreach ($this->aspects[$pointcut] as $item) {
+                $this->invokeBeforeAspect($item['aspect'], $event);
             }
         }
     }
@@ -129,13 +174,36 @@ class AspectEventDispatcher extends Dispatcher
      */
     protected function triggerAfterAspects(Event $event): void
     {
-        foreach ($this->aspects as $pointcut => $aspects) {
-            if ($this->matchesPointcut($event->getName(), $pointcut)) {
-                foreach ($aspects as $item) {
-                    $this->invokeAfterAspect($item['aspect'], $event);
-                }
+        foreach ($this->getMatchedPointcuts($event->getName()) as $pointcut) {
+            foreach ($this->aspects[$pointcut] as $item) {
+                $this->invokeAfterAspect($item['aspect'], $event);
             }
         }
+    }
+
+    /**
+     * 获取当前事件名命中的切入点表达式列表（带缓存）
+     *
+     * @return string[]
+     */
+    protected function getMatchedPointcuts(string $eventName): array
+    {
+        if (isset($this->matchedPointcuts[$eventName])) {
+            return $this->matchedPointcuts[$eventName];
+        }
+
+        $matched = [];
+        foreach ($this->aspects as $pointcut => $_) {
+            if ($this->matchesPointcut($eventName, $pointcut)) {
+                $matched[] = $pointcut;
+            }
+        }
+
+        if (count($this->matchedPointcuts) >= 512) {
+            array_shift($this->matchedPointcuts);
+        }
+
+        return $this->matchedPointcuts[$eventName] = $matched;
     }
 
     /**

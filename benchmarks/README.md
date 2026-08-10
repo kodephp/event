@@ -45,3 +45,44 @@ php benchmarks/bench.php --json
 3. `invalidateCache` 用独立 `$objectCacheKeys` 集合替代全表扫描 `resolvedCache`，
    注册 / 注销时仅失效对象事件缓存，保留正确性语义。
 4. `Dispatcher::dispatch` / `until` 热路径上去重 `describe()` 调用。
+
+## v1.15.0 优化对比（累计相对 v1.13.0 基线，PHP 8.3.33）
+
+v1.15.0 在 v1.14.0 之上叠加了惰性排序、切面匹配缓存、类层级缓存、数据快照、延迟调度有序化、
+追踪调用精简等优化，并修复了 5 处审计缺陷（详见 `../CHANGELOG.md`）。
+
+| 场景 | v1.13.0 | v1.15.0 | 提升 |
+| --- | --- | --- | --- |
+| 基础派发（无监听器） | 2,904,748 | 3,141,963 | +8.2% |
+| 派发 +1 监听器 | 2,225,230 | 2,487,768 | +11.8% |
+| 派发 +10 监听器 | 2,172,683 | 2,434,419 | +12.0% |
+| 通配符派发（命中 `user.*`） | 2,125,279 | 2,471,282 | +16.3% |
+| 大量不同事件名（缓存未命中密集） | 1,019 | 1,969 | **+93.3%** |
+| 批量注册 2000 监听器 | 1,301 | 1,571 | **+20.8%** |
+| 注册后派发 | 1,286 | 1,560 | +21.3% |
+| `until()` 短路派发 | 2,255,986 | 2,630,161 | +16.6% |
+| `DeferredDispatcher` defer+process | 1,926,694 | 1,875,040 | ≈ 持平* |
+| `new Event(name,data)` | 13,549,573 | 14,204,276 | +4.8% |
+| `Event::get("a.b.c")` 点路径 | 5,718,864 | 5,952,977 | +4.1% |
+
+\* 单元素 `defer+process` 在噪声范围内持平；待处理集大、到期项少时 `process()` 的「只收集到期项 +
+按 `dispatchAt` 升序」策略相比旧版全表扫描 + 整表 COW 复制有明显优势，并修正延迟语义。
+
+### v1.15.0 优化点
+
+1. `ListenerRegistry` 注册惰性排序：注册仅追加 + 打 `dirty` 标记，排序延迟到首次读取时执行一次，
+   消除同事件大量注册的 O(n²·log n) 排序开销（批量注册 +20.8%）。
+2. `AspectEventDispatcher` 切面匹配缓存：按事件名缓存命中的切入点，派发从「全切面 `preg_match`」降为一次查表。
+3. `ListenerRegistry` 类层级缓存（`$keysByClass`）+ 正则 FIFO 单条淘汰，免去重复 `class_parents` / `class_implements` 解析。
+4. `EventSchema` 校验时 `getData()` 一次性快照，替代逐字段 `has()` + `get()` 双次查表。
+5. `DeferredDispatcher::process` 收集到期项后按 `dispatchAt` 升序派发，避免整表 COW，修正延迟语义。
+6. `DistributedEventTracer::propagate` 复用 `injectToEvent` 返回头部，去掉一次多余 `toTraceparent()` 调用。
+7. `Dispatcher` 指标采集懒计时（`stats` 关闭时不调用 `hrtime`）+ 循环前提炼「可停止传播」布尔。
+
+### v1.15.0 修复的审计缺陷
+
+- BUG-1：`Dispatcher` 开启 `stats` 时，前置钩子抛异常不再被 `finally` 中的 `TypeError` 掩盖原始异常。
+- BUG-2：`AspectEventDispatcher::until()` 此前绕过切面，现已同样触发前后置切面。
+- BUG-3：`QueueDispatcher::processMany` 不再因队首毒丸任务（`process()` 返回 false）冻结整批消费。
+- BUG-4：`EventReplay::replayReverse(0)` 不再误重放全部事件。
+- BUG-5：`EventHelper::buildName` 不再把数字段名 `'0'` 当作空值丢弃。

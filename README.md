@@ -1590,6 +1590,28 @@ php benchmarks/bench.php --json     # 额外导出 benchmarks/benchmark-latest.j
 
 \* 微基准噪声范围内的正常波动，无回归。
 
+### v1.15.0 优化（累计相对 v1.13.0 基线，PHP 8.3.33）
+
+v1.15.0 在 v1.14.0 基础上叠加了「惰性排序 / 切面匹配缓存 / 类层级缓存 / 数据快照 / 延迟调度有序化 /
+追踪调用精简」等优化，并修复了 5 处审计发现的缺陷（见 [CHANGELOG](CHANGELOG.md)）：
+
+| 场景 | v1.13.0 (ops/sec) | v1.15.0 (ops/sec) | 提升 |
+| --- | --- | --- | --- |
+| 基础派发（无监听器） | 2,904,748 | 3,141,963 | +8.2% |
+| 派发 +1 监听器 | 2,225,230 | 2,487,768 | +11.8% |
+| 派发 +10 监听器 | 2,172,683 | 2,434,419 | +12.0% |
+| 通配符派发（命中 `user.*`） | 2,125,279 | 2,471,282 | +16.3% |
+| **大量不同事件名（缓存未命中密集）** | **1,019** | **1,969** | **+93.3%** |
+| **批量注册 2000 监听器** | **1,301** | **1,571** | **+20.8%** |
+| 注册后派发 | 1,286 | 1,560 | +21.3% |
+| `until()` 短路派发 | 2,255,986 | 2,630,161 | +16.6% |
+| `DeferredDispatcher` defer+process | 1,926,694 | 1,875,040 | ≈ 持平* |
+| `new Event(name,data)` | 13,549,573 | 14,204,276 | +4.8% |
+| `Event::get("a.b.c")` 点路径 | 5,718,864 | 5,952,977 | +4.1% |
+
+\* 单元素 `defer+process` 在噪声范围内持平；当待处理集较大、到期项较少时，`process()` 的「只收集到期项 +
+按 `dispatchAt` 升序」策略相比旧版全表扫描 + 整表 COW 复制有显著优势，且修正了延迟语义（delay 小的先触发）。
+
 ### 本轮优化点
 
 - **`ListenerRegistry::getListeners` 避免冗余排序**：精确桶在注册时已排序，仅当命中通配符
@@ -1601,6 +1623,25 @@ php benchmarks/bench.php --json     # 额外导出 benchmarks/benchmark-latest.j
   的正确性语义，见 v1.13.0 C4 修复），注册量越大收益越明显。
 - **`Dispatcher::dispatch` / `until` 去重事件名计算**：移除了前置钩子前的一次冗余
   `describe()` 调用，热路径上每个事件仅计算一次可读标识。
+
+#### v1.15.0 新增优化点
+
+- **`ListenerRegistry` 监听器注册惰性排序（OPT-1）**：注册阶段仅追加条目并打 `dirty` 标记，
+  排序延迟到首次 `getListeners()` 读取时执行一次（结果会进入解析缓存）。彻底消除「同事件大量注册」
+  场景下每次 `listen()` 都 `usort` 的 O(n²·log n) 开销，使「批量注册 2000 监听器」提升约 20%。
+- **`AspectEventDispatcher` 切面匹配缓存（OPT-2）**：按事件名缓存命中的切入点表达式列表，
+  每次派发从「对全部切面逐一 `preg_match`」降为一次数组查表；切面数量越多收益越大。
+- **`ListenerRegistry` 类层级缓存 + 正则 FIFO 淘汰（OPT-5/6）**：`resolveObjectKeys()` 按类名缓存
+  （类层级不可变，命中即免一次 `class_parents` / `class_implements` 全量解析）；`compilePattern()` 正则缓存
+  从「填满即整表清空」改为 FIFO 单条淘汰，消除周期性重编译抖动。
+- **`EventSchema` 数据快照（OPT-4）**：`validateEvent()` / `explain()` 开头一次性 `getData()` 快照，
+  后续用 `array_key_exists` / 直接索引替代逐字段 `has()` + `get()` 的双次方法调用与查表。
+- **`DeferredDispatcher` 有序延迟调度（OPT-8）**：`process()` 先收集到期任务、按 `dispatchAt` 升序派发，
+  未到期任务保持不动，避免遍历中对整张待处理表做 COW 复制，并修正延迟语义（delay 小的先触发）。
+- **`DistributedEventTracer::propagate` 追踪调用精简（OPT-3）**：复用 `injectToEvent()` 返回的头部，
+  去掉一次多余的 `toTraceparent()` 调用，每次派发的上下文调用由两次降到一次。
+- **`Dispatcher` 指标采集懒计时（OPT-7）**：`stats` 未启用时不调用 `hrtime()`，并将「是否可停止传播」
+  的判断在循环前提炼为局部布尔，减少热路径上的重复 `instanceof`。
 
 ### 性能注意事项
 

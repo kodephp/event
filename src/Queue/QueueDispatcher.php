@@ -133,12 +133,19 @@ class QueueDispatcher
     public function processMany(?string $queue = null, int $limit = 10): int
     {
         $count = 0;
+        $queueName = $this->getQueueName($queue);
 
         for ($i = 0; $i < $limit; $i++) {
-            if (!$this->process($queue)) {
+            // 以队列是否还有任务作为「继续消费」的依据，而非依赖 process() 的返回：
+            // 单条毒丸（不可反序列化）任务会被 process() 出队并返回 false，
+            // 若据此 break 会冻结其后所有有效任务。这里发现队列已空才提前结束。
+            if ($this->driver->size($queueName) === 0) {
                 break;
             }
-            $count++;
+
+            if ($this->process($queue)) {
+                $count++;
+            }
         }
 
         return $count;

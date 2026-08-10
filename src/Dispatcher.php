@@ -208,15 +208,17 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     public function dispatch(object|string $event, array $data = []): object
     {
         $event = is_string($event) ? new Event($event, $data) : $event;
+        $name = $this->describe($event);
 
         if ($this->depth >= $this->maxDepth) {
-            throw PropagationException::maxDepthExceeded($this->describe($event), $this->maxDepth);
+            throw PropagationException::maxDepthExceeded($name, $this->maxDepth);
         }
 
         $this->depth++;
-        $startedAt = hrtime(true);
+        $startedAt = $this->stats !== null ? hrtime(true) : 0;
         $errors = [];
         $invoked = 0;
+        $isStoppable = $event instanceof StoppableEventInterface || $event instanceof PsrStoppableEventInterface;
 
         try {
             $event = $this->runPreDispatchers($event);
@@ -226,7 +228,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
             $name = $this->describe($event);
             $this->attachTrace($event);
 
-            if ($this->isStopped($event)) {
+            if ($isStoppable && $event->isPropagationStopped()) {
                 return $event;
             }
 
@@ -248,7 +250,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
                     $errors[] = $e;
                 }
 
-                if ($this->isStopped($event)) {
+                if ($isStoppable && $event->isPropagationStopped()) {
                     break;
                 }
             }
@@ -308,15 +310,17 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     public function until(object|string $event, array $data = []): mixed
     {
         $event = is_string($event) ? new Event($event, $data) : $event;
+        $name = $this->describe($event);
 
         if ($this->depth >= $this->maxDepth) {
-            throw PropagationException::maxDepthExceeded($this->describe($event), $this->maxDepth);
+            throw PropagationException::maxDepthExceeded($name, $this->maxDepth);
         }
 
         $this->depth++;
-        $startedAt = hrtime(true);
+        $startedAt = $this->stats !== null ? hrtime(true) : 0;
         $invoked = 0;
         $errors = [];
+        $isStoppable = $event instanceof StoppableEventInterface || $event instanceof PsrStoppableEventInterface;
 
         try {
             $event = $this->runPreDispatchers($event);
@@ -324,7 +328,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
             $name = $this->describe($event);
             $this->attachTrace($event);
 
-            if ($this->isStopped($event)) {
+            if ($isStoppable && $event->isPropagationStopped()) {
                 return null;
             }
 
@@ -352,7 +356,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
                     return $result;
                 }
 
-                if ($this->isStopped($event)) {
+                if ($isStoppable && $event->isPropagationStopped()) {
                     break;
                 }
             }

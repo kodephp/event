@@ -61,17 +61,32 @@ class DeferredDispatcher
     public function process(): int
     {
         $now = hrtime(true);
-        $count = 0;
+        $ready = [];
 
+        // 先收集到期任务，避免在遍历中对整张待处理表做 COW 复制；
+        // 未到期任务保持不动，不会被无谓地复制。
         foreach ($this->deferred as $id => $job) {
             if ($job['dispatchAt'] <= $now) {
-                $this->dispatcher->dispatch($job['event']);
-                unset($this->deferred[$id]);
-                $count++;
+                $ready[$id] = $job['dispatchAt'];
             }
         }
 
-        return $count;
+        if ($ready === []) {
+            return 0;
+        }
+
+        // 按调度时间升序派发，保证延迟语义正确（delay 小的先触发）；
+        // 仅单条到期时无需排序，避免无谓开销
+        if (count($ready) > 1) {
+            asort($ready);
+        }
+
+        foreach (array_keys($ready) as $id) {
+            $this->dispatcher->dispatch($this->deferred[$id]['event']);
+            unset($this->deferred[$id]);
+        }
+
+        return count($ready);
     }
 
     public function processAll(): int
