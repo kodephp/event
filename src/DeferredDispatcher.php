@@ -80,6 +80,70 @@ class DeferredDispatcher
         return $id;
     }
 
+    /**
+     * 批量回填历史定时任务（deferAt 语义的批量变体）
+     *
+     * 适用于「事件溯源重放 / 历史补调度 / 批量回填」等场景：一次性插入大量
+     * dispatchAt 早于（或等于）现有待处理任务的定时任务。
+     *
+     * 逐个调用 deferAt() 时，每次前插都要从队尾向前定位插入点并执行 array_splice
+     * （O(n) 搬移），批量回填 m 个任务会退化到 O(m·n)。本方法内部先按 dispatchAt
+     * 升序排序，再与现有 order 索引做单次归并（O(m·log m + n + m)）：
+     *
+     * - 全部晚于现有任务 → 直接追加（O(m)）；
+     * - 全部早于现有任务（历史回填最常见情形）→ 纯前插（O(m)）；
+     * - 其余交错情形 → 两段均有序，单次归并（O(n + m)）。
+     *
+     * @param iterable<array{event: Event|string, data?: array, timestamp: int}> $entries
+     *        每个条目至少含 `event` 与整数 `timestamp`（绝对 Unix 时间戳，语义同 deferAt）；
+     *        `data` 缺省为空数组。
+     * @return list<int> 按派发顺序返回的本次新插入任务 id 列表
+     *
+     * @throws \InvalidArgumentException 条目缺少 event 或整数 timestamp 时
+     */
+    public function deferBackfill(iterable $entries): array
+    {
+        $newIds = [];
+        $newAts = [];
+
+        foreach ($entries as $entry) {
+            $event = $entry['event'] ?? null;
+            if ($event === null) {
+                throw new \InvalidArgumentException('deferBackfill 条目缺少 event');
+            }
+            $data = $entry['data'] ?? [];
+            $timestamp = $entry['timestamp'] ?? null;
+            if (!is_int($timestamp)) {
+                throw new \InvalidArgumentException('deferBackfill 条目缺少整数 timestamp');
+            }
+
+            if (is_string($event)) {
+                $event = new Event($event, $data);
+            }
+
+            $at = hrtime(true) + max(0, $timestamp - time()) * 1_000_000_000;
+            $id = $this->nextId++;
+            $this->deferred[$id] = [
+                'event' => $event,
+                'dispatchAt' => $at,
+                'delay' => 0,
+            ];
+            $newIds[] = $id;
+            $newAts[] = $at;
+        }
+
+        if ($newIds === []) {
+            return [];
+        }
+
+        // 按 dispatchAt 升序稳定排序，使归并的两段都保持有序
+        array_multisort($newAts, SORT_NUMERIC, $newIds);
+
+        $this->mergeIntoOrder($newIds, $newAts);
+
+        return $newIds;
+    }
+
     public function cancel(int $id): bool
     {
         if (!isset($this->deferred[$id])) {
@@ -201,5 +265,67 @@ class DeferredDispatcher
         }
 
         array_splice($this->order, $pos, 0, [$id]);
+    }
+
+    /**
+     * 将一批已按 dispatchAt 升序排列的任务 id 归并进 order 索引
+     *
+     * $newIds / $newAts 必须等长且均按 dispatchAt 升序。在「全部早于 / 全部晚于
+     * 现有任务」两种常见情形下走 O(m) 快路径；其余交错情形做单次有序归并（O(n + m)），
+     * 整体取代逐个 enqueue() 的 O(n) 前插，避免批量回填退化到 O(m·n)。
+     *
+     * @param list<int> $newIds 按 dispatchAt 升序的新任务 id
+     * @param list<int> $newAts 与 $newIds 一一对应的 dispatchAt
+     */
+    private function mergeIntoOrder(array $newIds, array $newAts): void
+    {
+        if ($this->order === []) {
+            $this->order = $newIds;
+            return;
+        }
+
+        $lastExistingAt = $this->deferred[$this->order[count($this->order) - 1]]['dispatchAt'];
+        $firstNewAt = $newAts[0];
+
+        // 快路径 1：全部晚于现有任务 → 直接追加（与 enqueue 尾部 O(1) 一致）
+        if ($firstNewAt >= $lastExistingAt) {
+            foreach ($newIds as $nid) {
+                $this->order[] = $nid;
+            }
+            return;
+        }
+
+        // 快路径 2：全部早于现有任务（历史回填最常见情形）→ 纯前插
+        // 注意需用「最大新值」判定，而非最小新值，方能保证全部早于现有任务
+        $firstExistingAt = $this->deferred[$this->order[0]]['dispatchAt'];
+        $maxNewAt = $newAts[count($newAts) - 1];
+        if ($maxNewAt <= $firstExistingAt) {
+            $this->order = array_merge($newIds, $this->order);
+            return;
+        }
+
+        // 一般情况：两段均有序，单次有序归并 O(n + m)
+        // 相等时现有任务优先（与逐个 enqueue 的语义一致：晚注册者靠后）
+        $merged = [];
+        $i = 0;
+        $j = 0;
+        $nNew = count($newIds);
+        $nOld = count($this->order);
+        while ($i < $nNew && $j < $nOld) {
+            if ($newAts[$i] < $this->deferred[$this->order[$j]]['dispatchAt']) {
+                $merged[] = $newIds[$i];
+                $i++;
+            } else {
+                $merged[] = $this->order[$j];
+                $j++;
+            }
+        }
+        while ($i < $nNew) {
+            $merged[] = $newIds[$i++];
+        }
+        while ($j < $nOld) {
+            $merged[] = $this->order[$j++];
+        }
+        $this->order = $merged;
     }
 }

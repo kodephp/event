@@ -115,6 +115,32 @@ optimize 点：
 - `50000 待处理 + 50 到期`（`6b` 节）：构造 50000 个远未来任务 + 50 个立即到期任务，仅计时单次 `process()`，
   用于量化「大待处理集、少到期」场景的扫描开销改善。
 
+## v1.18.0 优化对比（DeferredDispatcher::deferBackfill 批量前插，PHP 8.3.33）
+
+v1.18.0 新增 `DeferredDispatcher::deferBackfill()`，针对「一次性插入大量 `dispatchAt` 早于现有任务的历史
+回填」场景。此前逐个 `deferAt()` 每次前插都要 `array_splice` 搬移 O(n)，整体退化 O(m·n)；新路径先排序再与
+现有 `order` 索引做单次归并（O(m·log m + n + m)）。新增压测场景「历史回填批量前插」（`6d` 节），
+构造 20000 个远未来任务作为现有待处理集，再回填 20000 个历史事件（全部早于现有），仅计时回填插入本身：
+
+| 实现 | 回填 20000 任务耗时（中位数） | 相对 |
+| --- | --- | --- |
+| 循环 deferAt()（每次前插 O(n)，整体 O(m·n)） | 7,284 ms | 1× |
+| deferBackfill()（排序 + 单次归并 O(m·log m + n + m)） | 5.354 ms | **≈ 1360×** |
+
+### v1.18.0 优化点
+
+1. `DeferredDispatcher::deferBackfill()`：接受 `[{event, data?, timestamp}]` 批量条目（语义同 `deferAt`），
+   内部按 `dispatchAt` 升序排序后，经 `mergeIntoOrder()` 与现有 `order` 索引归并。
+2. `mergeIntoOrder()` 三段式归并：全部晚于现有 → 追加（O(m)）；全部早于现有 → 纯前插（O(m)）；
+   交错 → 单次有序归并（O(n + m)）。相等 `dispatchAt` 以现有任务优先，与逐个 `enqueue` 保持一致。
+3. 仅「指定早于已有任务的 `dispatchAt` 且为零散单条 `deferAt`」时才走 O(n) 前插；批量回填改走归并，
+   彻底消除 O(m·n) 退化。
+
+### v1.18.0 新增压测场景
+
+- `历史回填批量前插`（`6d` 节）：构造 20000 个远未来任务 + 回填 20000 个历史事件，分别用循环 `deferAt`
+  与 `deferBackfill` 计时插入，用于量化批量回填的退化改善。
+
 ## v1.17.0 优化对比（DeferredDispatcher::cancel O(1)，PHP 8.3.33）
 
 v1.17.0 将 `DeferredDispatcher::cancel()` 从「每次 `array_search` + `array_values` 重建 `order` 索引（O(n)）」

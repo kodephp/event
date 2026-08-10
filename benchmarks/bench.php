@@ -248,6 +248,82 @@ $results['event_get_dotted'] = bench('Event::get("a.b.c") 点路径', 2_000_000,
     $e->get('a.b.c');
 });
 
+// ------------------------------------------------------------------
+// 6d. DeferredDispatcher 历史回填批量前插
+// ------------------------------------------------------------------
+section('6d. DeferredDispatcher 历史回填批量前插');
+// 构造 20000 个远未来任务作为现有待处理集，再回填 20000 个「历史」任务
+// （dispatchAt 全部早于现有任务）。比较：
+//  - 旧路径：循环调用 deferAt()（每次前插 O(n) → 整体 O(m·n)）
+//  - 新路径：deferBackfill() 单次归并（O(m·log m + n + m)）
+$existingFuture = 20_000;
+$backfillCount = 20_000;
+
+$buildBackfill = static function (int $n, int $baseTs): array {
+    $entries = [];
+    $step = 60; // 每个历史事件间隔 60s
+    for ($i = 0; $i < $n; $i++) {
+        $entries[] = [
+            'event' => new Event('def.backfill', ['idx' => $i]),
+            'data' => [],
+            'timestamp' => $baseTs - ($n - $i) * $step,
+        ];
+    }
+    return $entries;
+};
+
+$baseTs = time() - 10_000;
+$backfillEntries = $buildBackfill($backfillCount, $baseTs);
+
+$measureBackfillOld = static function () use ($existingFuture, $backfillEntries): float {
+    $dd = new DeferredDispatcher(new Dispatcher());
+    for ($i = 0; $i < $existingFuture; $i++) {
+        $dd->deferAt(new Event('def.future'), [], time() + 1_000_000);
+    }
+    $start = hrtime(true);
+    foreach ($backfillEntries as $e) {
+        $dd->deferAt($e['event'], $e['data'], $e['timestamp']);
+    }
+    return (hrtime(true) - $start) / 1e6;
+};
+
+$measureBackfillNew = static function () use ($existingFuture, $backfillEntries): float {
+    $dd = new DeferredDispatcher(new Dispatcher());
+    for ($i = 0; $i < $existingFuture; $i++) {
+        $dd->deferAt(new Event('def.future'), [], time() + 1_000_000);
+    }
+    $start = hrtime(true);
+    $dd->deferBackfill($backfillEntries);
+    return (hrtime(true) - $start) / 1e6;
+};
+
+$oldSamples = [];
+$newSamples = [];
+for ($s = 0; $s < 3; $s++) {
+    $oldSamples[] = $measureBackfillOld();
+    $newSamples[] = $measureBackfillNew();
+}
+sort($oldSamples);
+sort($newSamples);
+$medianOld = $oldSamples[intdiv(count($oldSamples), 2)];
+$medianNew = $newSamples[intdiv(count($newSamples), 2)];
+printf("  %-42s 中位数 %10.3f ms\n", "旧: 循环 deferAt ×{$backfillCount}", $medianOld);
+printf("  %-42s 中位数 %10.3f ms\n", "新: deferBackfill ×{$backfillCount}", $medianNew);
+$speedup = $medianOld > 0 ? $medianOld / $medianNew : 0.0;
+printf("  %-42s %10.1f×\n", '回填提速', $speedup);
+$results['defer_backfill_old'] = [
+    'title' => "回填旧路径 deferAt×{$backfillCount}",
+    'ops' => 1,
+    'ms' => $medianOld,
+    'ops_per_sec' => $medianOld > 0 ? 1000.0 / $medianOld : 0.0,
+];
+$results['defer_backfill_new'] = [
+    'title' => "回填新路径 deferBackfill×{$backfillCount}",
+    'ops' => 1,
+    'ms' => $medianNew,
+    'ops_per_sec' => $medianNew > 0 ? 1000.0 / $medianNew : 0.0,
+];
+
 echo "\n完成。\n";
 
 if ($json) {

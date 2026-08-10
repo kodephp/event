@@ -161,4 +161,132 @@ final class DeferredOrderTest extends TestCase
         $this->assertSame(['now'], $tags, '前插的到期任务应先派发，未来任务保留');
         $this->assertSame(1, $dd->count());
     }
+
+    public function testBackfillPrependsBeforeExisting(): void
+    {
+        $dispatcher = new Dispatcher();
+        $dd = new DeferredDispatcher($dispatcher);
+
+        $fired = [];
+        $dispatcher->listen('bf', static function (Event $e) use (&$fired): void {
+            $fired[] = $e->get('tag');
+        });
+
+        // 现有 3 个远未来任务
+        $dd->deferAt(new Event('bf', ['tag' => 'f1']), [], time() + 1_000_000);
+        $dd->deferAt(new Event('bf', ['tag' => 'f2']), [], time() + 1_000_000);
+        $dd->deferAt(new Event('bf', ['tag' => 'f3']), [], time() + 1_000_000);
+
+        // 回填 3 个历史事件（过去时间戳 → 立即到期，应前插到队首）
+        $base = time() - 1000;
+        $dd->deferBackfill([
+            ['event' => new Event('bf', ['tag' => 'h1']), 'timestamp' => $base + 1],
+            ['event' => new Event('bf', ['tag' => 'h2']), 'timestamp' => $base + 2],
+            ['event' => new Event('bf', ['tag' => 'h3']), 'timestamp' => $base + 3],
+        ]);
+
+        $dd->process();
+
+        $this->assertSame(['h1', 'h2', 'h3'], $fired, '回填的历史任务应在现有未来任务之前按序派发');
+        $this->assertSame(3, $dd->count(), '现有未来任务应保留');
+    }
+
+    public function testBackfillReturnsInsertedIdsInDispatchOrder(): void
+    {
+        $dd = new DeferredDispatcher(new Dispatcher());
+
+        $ids = $dd->deferBackfill([
+            ['event' => new Event('bf'), 'timestamp' => time() - 30],
+            ['event' => new Event('bf'), 'timestamp' => time() - 10],
+            ['event' => new Event('bf'), 'timestamp' => time() - 20],
+        ]);
+
+        $this->assertCount(3, $ids);
+        $this->assertSame($ids, array_values(array_unique($ids)), '返回 id 互不重复');
+
+        // 返回的 id 顺序应与 dispatchAt 升序一致（乱序输入应被排序）
+        $ref = new \ReflectionObject($dd);
+        $defProp = $ref->getProperty('deferred');
+        $defProp->setAccessible(true);
+        $def = $defProp->getValue($dd);
+
+        $ats = array_map(static fn (int $id): int => $def[$id]['dispatchAt'], $ids);
+        $sorted = $ats;
+        sort($sorted);
+        $this->assertSame($sorted, $ats, '返回的 id 必须按 dispatchAt 升序');
+    }
+
+    public function testBackfillEmptyReturnsEmptyArray(): void
+    {
+        $dd = new DeferredDispatcher(new Dispatcher());
+        $this->assertSame([], $dd->deferBackfill([]));
+    }
+
+    public function testBackfillRejectsMissingEvent(): void
+    {
+        $dd = new DeferredDispatcher(new Dispatcher());
+        $this->expectException(\InvalidArgumentException::class);
+        $dd->deferBackfill([['timestamp' => time()]]);
+    }
+
+    public function testBackfillRejectsMissingTimestamp(): void
+    {
+        $dd = new DeferredDispatcher(new Dispatcher());
+        $this->expectException(\InvalidArgumentException::class);
+        $dd->deferBackfill([['event' => new Event('bf')]]);
+    }
+
+    public function testBackfillOrderIndexStaysSortedAcrossInterleave(): void
+    {
+        $dd = new DeferredDispatcher(new Dispatcher());
+
+        // 现有：一个远未来任务
+        $dd->deferAt(new Event('bf'), [], time() + 1_000_000);
+
+        // 回填：交错的时间戳（过去 / 更远的未来 / 中间未来）
+        $now = time();
+        $dd->deferBackfill([
+            ['event' => new Event('bf'), 'timestamp' => $now - 500],
+            ['event' => new Event('bf'), 'timestamp' => $now + 2_000_000],
+            ['event' => new Event('bf'), 'timestamp' => $now + 500],
+        ]);
+
+        $ref = new \ReflectionObject($dd);
+        $orderProp = $ref->getProperty('order');
+        $orderProp->setAccessible(true);
+        $defProp = $ref->getProperty('deferred');
+        $defProp->setAccessible(true);
+        $order = $orderProp->getValue($dd);
+        $def = $defProp->getValue($dd);
+
+        $ats = array_map(static fn ($id): int => $def[$id]['dispatchAt'], $order);
+        $sorted = $ats;
+        sort($sorted);
+        $this->assertSame($sorted, $ats, '归并后 order 索引必须按 dispatchAt 升序');
+    }
+
+    public function testBackfillKeepsFutureTasksRelativeOrder(): void
+    {
+        $dispatcher = new Dispatcher();
+        $dd = new DeferredDispatcher($dispatcher);
+
+        $fired = [];
+        $dispatcher->listen('bf', static function (Event $e) use (&$fired): void {
+            $fired[] = $e->get('tag');
+        });
+
+        // 现有：一个远未来任务
+        $dd->deferAt(new Event('bf', ['tag' => 'F']), [], time() + 1_000_000);
+
+        // 回填：一个历史事件（立即到期）+ 一个更远的未来（应排到 F 之后）
+        $dd->deferBackfill([
+            ['event' => new Event('bf', ['tag' => 'H']), 'timestamp' => time() - 1000],
+            ['event' => new Event('bf', ['tag' => 'FF']), 'timestamp' => time() + 2_000_000],
+        ]);
+
+        $dd->process();
+
+        $this->assertSame(['H'], $fired, '仅历史(到期)任务立即派发，未来任务保留');
+        $this->assertSame(2, $dd->count(), '保留 F 与 FF 两个未来任务');
+    }
 }

@@ -2,6 +2,22 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.18.0
+- **DeferredDispatcher 新增 `deferBackfill()` 历史回填批量前插**：针对「事件溯源重放 / 历史补调度 /
+  批量回填」等一次性插入大量 `dispatchAt` 早于现有任务的场景。此前逐个调用 `deferAt()`，每次前插都要
+  从队尾向前定位插入点并执行 `array_splice`（O(n) 搬移），批量回填 m 个任务退化到 O(m·n)。
+  现 `deferBackfill()` 内部先按 `dispatchAt` 升序排序，再与现有 `order` 索引做单次归并：
+  - 全部晚于现有任务 → 直接追加（O(m)）；
+  - 全部早于现有任务（历史回填最常见情形）→ 纯前插（O(m)）；
+  - 其余交错情形 → 两段均有序，单次有序归并（O(n + m)）。
+  归并时相等 `dispatchAt` 以现有任务优先（与逐个 `enqueue` 的语义一致：晚注册者靠后）。
+  - 效果（PHP 8.3.33，20000 远未来任务 + 回填 20000 个历史事件）：循环 `deferAt` 7,284 ms →
+    `deferBackfill` 5.354 ms（**≈ 1360×**）。
+- **测试**：在 `tests/DeferredOrderTest.php` 新增 6 项覆盖 `deferBackfill`（前插早于现有、返回 id 按
+  dispatchAt 升序、空回填返回空、缺 event/timestamp 抛异常、交错归并后 order 索引仍有序、保留未来任务
+  相对顺序）；全量套件 **261 tests / 613 assertions** 通过。
+- **压测**：`benchmarks/bench.php` 新增「历史回填批量前插」场景（6d 节），量化 O(m·n) → O(m·log m + n + m) 的改善。
+
 ## v1.17.0
 - **DeferredDispatcher::cancel 降为 O(1)**：此前 cancel 每次 `array_search` + `array_values` 重建 `order`
   索引（O(n)），大待处理集 + 频繁取消场景累积退化 O(n²)。现改为仅 `unset` 任务本体（O(1)），被取消 id 在
