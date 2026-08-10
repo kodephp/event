@@ -175,6 +175,20 @@ v1.20.0 将对象事件 / NamedEvent 的监听器解析统一收敛到 `getListe
 
 > 退避抖动（jitter）为纯计算增强：实际退避 = 基础退避 × (1 ± jitter 随机扰动)，不引入额外 I/O 或阻塞，仅改变 `computeDelay()` 返回值；`RetryListener` 的语义与既有测试保持兼容。
 
+## v1.22.0 FileEventStore 批量写入 + 流式加载（PHP 8.3.33）
+
+新增压测场景 `10`（FileEventStore，20 万事件）：
+
+| 场景 | 耗时 / 内存 | 说明 |
+| --- | --- | --- |
+| 单条 append ×200,000 | 4190.5 ms | 每次一次 syscall + 加锁 |
+| appendBatch ×200,000 | 221.5 ms | 一次性整块原子写（FILE_APPEND \| LOCK_EX） |
+| 批量写入提速 | **≈ 18.9×** | 减少 syscall / 锁竞争 |
+| all() 全量物化峰值增量 | 40,944 KB | 整份日志物化进内存 |
+| stream() 流式峰值增量 | 0 KB | 惰性逐行生成器，O(1) 内存 |
+
+> `stream()` 为超大日志重放提供 O(1) 内存路径，避免 `all()` 把整份日志物化；`appendBatch` 为快照回放 / 批量导入提供高吞吐写入。
+
 ## v1.17.0 优化对比（DeferredDispatcher::cancel O(1)，PHP 8.3.33）
 
 v1.17.0 将 `DeferredDispatcher::cancel()` 从「每次 `array_search` + `array_values` 重建 `order` 索引（O(n)）」

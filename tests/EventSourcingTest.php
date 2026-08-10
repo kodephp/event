@@ -167,6 +167,84 @@ final class EventSourcingTest extends TestCase
         $this->assertSame('trace-xyz', $captured->getMeta('traceId'));
     }
 
+    public function testInMemoryAppendBatchReturnsAllEnvelopes(): void
+    {
+        $store = new InMemoryEventStore();
+        $added = $store->appendBatch([
+            ['event' => new Event('a')],
+            ['event' => new Event('b'), 'metadata' => ['k' => 'v']],
+        ]);
+
+        $this->assertCount(2, $added);
+        $this->assertSame(2, $store->count());
+        $this->assertSame('a', $added[0]->name);
+        $this->assertSame(['k' => 'v'], $added[1]->metadata);
+    }
+
+    public function testFileAppendBatchPersistsMultipleLinesAtomically(): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'evtstore_');
+        $store = new FileEventStore($file);
+
+        $added = $store->appendBatch([
+            ['event' => new Event('a')],
+            ['event' => new Event('b')],
+            ['event' => new Event('c')],
+        ]);
+
+        $this->assertCount(3, $added);
+        $this->assertSame(3, $store->count());
+
+        // 落盘为 3 行
+        $lines = file($file, FILE_IGNORE_NEW_LINES);
+        $this->assertCount(3, $lines);
+
+        unlink($file);
+    }
+
+    public function testFileStreamYieldsAllWithoutCorruptLines(): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'evtstore_');
+        // 直接写文件：2 条有效 + 1 条损坏行
+        file_put_contents($file, json_encode([
+            'seq' => 1, 'id' => 'evt-0000000001', 'name' => 'ok1',
+            'data' => [], 'recorded_at' => 1, 'metadata' => [],
+        ]) . "\n");
+        file_put_contents($file, "broken-half-line\n", FILE_APPEND);
+        file_put_contents($file, json_encode([
+            'seq' => 2, 'id' => 'evt-0000000002', 'name' => 'ok2',
+            'data' => [], 'recorded_at' => 2, 'metadata' => [],
+        ]) . "\n", FILE_APPEND);
+
+        // 全新实例未 load：stream() 应惰性逐行产出 2 条有效，跳过损坏行
+        $store = new FileEventStore($file);
+        $names = [];
+        foreach ($store->stream() as $env) {
+            $names[] = $env->name;
+        }
+        $this->assertSame(['ok1', 'ok2'], $names);
+
+        unlink($file);
+    }
+
+    public function testFileStreamMatchesAllWhenLoaded(): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'evtstore_');
+        $store = new FileEventStore($file);
+        $store->appendBatch([
+            ['event' => new Event('x')],
+            ['event' => new Event('y')],
+        ]);
+
+        $streamed = [];
+        foreach ($store->stream() as $env) {
+            $streamed[] = $env->name;
+        }
+        $this->assertSame(array_map(static fn ($e) => $e->name, $store->all()), $streamed);
+
+        unlink($file);
+    }
+
     public function testStoreTypeIsInterchangeable(): void
     {
         // 保证 FileEventStore 同样满足 EventStoreInterface 契约（上传真接口断言）

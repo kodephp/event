@@ -2,6 +2,12 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.22.0
+- **FileEventStore 批量写入 + 流式加载（超大日志场景）**：
+  - `EventStoreInterface` 新增 `appendBatch(array $entries)` 与 `stream(): \Generator`；`FileEventStore` / `InMemoryEventStore` 均实现。
+  - `appendBatch` 一次性整块原子追加（FILE_APPEND \| LOCK_EX），减少 syscall 与锁竞争；压测 20 万事件 **4190ms → 221ms（≈18.9×）**。
+  - `stream()` 惰性逐行读取（O(1) 内存），适合超大日志重放；峰值内存增量 **0 KB**（对照 `all()` 全量物化 ≈ 40 MB），损坏行跳过。
+
 ## v1.21.0
 - **RetryListener 退避抖动（jitter）**：新增 `jitter`（0~1 比例）参数，实际退避 = 基础退避 × (1 ± jitter 随机扰动)，缓解重试风暴中的「惊群效应」；提供 `setRng()` 注入确定性随机源以便测试，校验 jitter∈[0,1]。
 - **事件溯源崩溃恢复压测**：新增 `FileEventStore` 场景——写入 5 万事件后模拟崩溃（截断末行半行 JSON），重载恢复 5 万条并跳过损坏行，验证恢复路径几乎零开销（恢复 41.4ms vs 干净基线 41.9ms）。

@@ -791,6 +791,23 @@ $replay->replayFromStore(from: 1);
 `seq` 即事件流游标，支持「从某序号起重放」。`EventStoreInterface` 实现可插拔：
 `InMemoryEventStore`（测试 / 单进程）与 `FileEventStore`（文件持久化，单写入者）。
 
+超大日志（快照回放、批量导入）请用批量写入与流式加载：
+
+```php
+// 批量写入：一次性整块原子追加，减少 syscall（20 万事件约 18.9× 提速）
+$store->appendBatch([
+    ['event' => new Event('order.created', ['id' => 1])],
+    ['event' => new Event('order.paid', ['id' => 1])],
+]);
+
+// 流式重放：O(1) 内存，逐行产出，避免把整份日志物化进内存（损坏行自动跳过）
+foreach ($store->stream() as $envelope) {
+    // 增量重建读模型 / 修复下游
+}
+```
+
+
+
 ## 重试与死信策略（Retry / Dead-Letter）
 
 用 `RetryListener` 包裹真实监听器，失败时按次数重试并退避；重试耗尽后投递到死信接收器，
@@ -1793,6 +1810,11 @@ v1.15.0 在 v1.14.0 基础上叠加了「惰性排序 / 切面匹配缓存 / 类
 
 - **退避抖动（jitter）**：`RetryListener` 新增 `jitter`（0~1 比例）参数，实际退避 = 基础退避 × (1 ± jitter 随机扰动)，缓解大量失败时的「重试惊群」；提供 `setRng()` 注入确定性随机源以便测试，并校验 jitter∈[0,1]。纯计算增强，不引入额外 I/O 或阻塞（`computeDelay()` 可单测）。
 - **事件溯源崩溃恢复压测**：`FileEventStore` 单写入者场景下，写入 5 万事件后模拟崩溃（截断末行半行 JSON），全新实例重载跳过损坏行并重建出全部 5 万条有效事件；恢复耗时 41.4 ms vs 干净基线 41.9 ms，损坏行跳过几乎零开销。
+
+### v1.22.0 增强：FileEventStore 批量写入 + 流式加载
+
+- `EventStoreInterface` 新增 `appendBatch()`（批量原子写入）与 `stream()`（生成器流式遍历，O(1) 内存），`FileEventStore` / `InMemoryEventStore` 双实现。
+- `appendBatch` 压测 20 万事件 **4190ms → 221ms（≈18.9×）**；`stream()` 峰值内存增量 **0 KB**（对照 `all()` 全量物化 ≈ 40 MB），适合超大日志重放 / 批量导入。
 
 ### 性能注意事项
 

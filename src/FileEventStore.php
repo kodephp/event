@@ -52,6 +52,76 @@ final class FileEventStore implements EventStoreInterface
     }
 
     #[\Override]
+    public function appendBatch(array $entries): array
+    {
+        if ($entries === []) {
+            return [];
+        }
+
+        $this->load();
+
+        $lines = '';
+        $added = [];
+        foreach ($entries as $entry) {
+            $metadata = $entry['metadata'] ?? [];
+            $this->seq++;
+            $envelope = new EventEnvelope(
+                $this->seq,
+                sprintf('evt-%010d', $this->seq),
+                $entry['event']->getName(),
+                $entry['event']->getData(),
+                (int) (hrtime(true) / 1000),
+                $metadata
+            );
+            $this->envelopes[] = $envelope;
+            $added[] = $envelope;
+            $lines .= json_encode(
+                $envelope->toArray(),
+                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            ) . "\n";
+        }
+
+        // 一次性整块原子追加，减少 syscall 与 LOCK_EX 竞争
+        file_put_contents($this->file, $lines, FILE_APPEND | LOCK_EX);
+
+        return $added;
+    }
+
+    #[\Override]
+    public function stream(): \Generator
+    {
+        // 已加载（或已发生过 append）：直接产出内存索引，行为等价
+        if ($this->loaded) {
+            foreach ($this->envelopes as $envelope) {
+                yield $envelope;
+            }
+            return;
+        }
+
+        // 惰性逐行读取：O(1) 内存，适合超大日志；损坏行跳过
+        if (!is_file($this->file)) {
+            return;
+        }
+
+        $fh = fopen($this->file, 'rb');
+        if ($fh === false) {
+            return;
+        }
+
+        while (($line = fgets($fh)) !== false) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $envelope = $this->parseLine($line);
+            if ($envelope !== null) {
+                yield $envelope;
+            }
+        }
+        fclose($fh);
+    }
+
+    #[\Override]
     public function all(): array
     {
         $this->load();
@@ -113,16 +183,10 @@ final class FileEventStore implements EventStoreInterface
                     if ($line === '') {
                         continue;
                     }
-                    try {
-                        $row = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
-                    } catch (JsonException) {
-                        // 损坏行：跳过，避免单条坏数据阻断整份日志重放
+                    $envelope = $this->parseLine($line);
+                    if ($envelope === null) {
                         continue;
                     }
-                    if (!is_array($row)) {
-                        continue;
-                    }
-                    $envelope = EventEnvelope::fromArray($row);
                     $this->envelopes[] = $envelope;
                     if ($envelope->seq > $this->seq) {
                         $this->seq = $envelope->seq;
@@ -132,6 +196,24 @@ final class FileEventStore implements EventStoreInterface
         }
 
         $this->loaded = true;
+    }
+
+    /**
+     * 解析单行 JSON 为信封；损坏行返回 null（跳过）
+     */
+    private function parseLine(string $line): ?EventEnvelope
+    {
+        try {
+            $row = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            // 损坏行：跳过，避免单条坏数据阻断整份日志重放
+            return null;
+        }
+        if (!is_array($row)) {
+            return null;
+        }
+
+        return EventEnvelope::fromArray($row);
     }
 
     /**

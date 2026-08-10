@@ -20,6 +20,25 @@ interface EventStoreInterface
     public function append(Event $event, array $metadata = []): EventEnvelope;
 
     /**
+     * 批量追加多条派发记录，返回本次追加的信封列表。
+     *
+     * 持久化实现应尽量一次性原子落盘（减少 syscall / 锁竞争），
+     * 适合「事件溯源快照回放」「批量导入」等超大日志场景。
+     *
+     * @param array<int, array{event: Event, metadata?: array<string, mixed>}> $entries
+     * @return EventEnvelope[]
+     */
+    public function appendBatch(array $entries): array;
+
+    /**
+     * 以生成器形式流式遍历全部信封（O(1) 内存，适合超大日志），
+     * 不要求把整份日志物化进内存。实现应跳过损坏行。
+     *
+     * @return \Generator<int, EventEnvelope, void, void>
+     */
+    public function stream(): \Generator;
+
+    /**
      * 返回全部信封（按 seq 升序）
      *
      * @return EventEnvelope[]

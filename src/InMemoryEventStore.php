@@ -37,6 +37,26 @@ final class InMemoryEventStore implements EventStoreInterface
     }
 
     #[\Override]
+    public function appendBatch(array $entries): array
+    {
+        $added = [];
+        foreach ($entries as $entry) {
+            $metadata = $entry['metadata'] ?? [];
+            $added[] = $this->append($entry['event'], $metadata);
+        }
+
+        return $added;
+    }
+
+    #[\Override]
+    public function stream(): \Generator
+    {
+        foreach ($this->envelopes as $envelope) {
+            yield $envelope;
+        }
+    }
+
+    #[\Override]
     public function all(): array
     {
         return $this->envelopes;

@@ -15,6 +15,9 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
+// 压测场景会生成大日志并全内存镜像（all()），放宽上限以容纳超大日志对比
+ini_set('memory_limit', '512M');
+
 use Kode\Event\DeferredDispatcher;
 use Kode\Event\Dispatcher;
 use Kode\Event\Event;
@@ -420,6 +423,69 @@ $results['file_store_recover'] = ['title' => "FileEventStore 崩溃恢复×{$n}"
 $results['file_store_clean'] = ['title' => "FileEventStore 干净重载×{$n}", 'ops' => $n, 'ms' => $cleanMs, 'ops_per_sec' => $cleanMs > 0 ? $n / ($cleanMs / 1000) : 0];
 
 @unlink($tmpFile);
+
+// ------------------------------------------------------------------
+// 10. 事件溯源 FileEventStore 批量写入 + 流式加载（超大日志）
+// ------------------------------------------------------------------
+section('10. FileEventStore 批量写入 / 流式加载');
+
+$big = 200_000;
+$bigFile = sys_get_temp_dir() . '/kode_event_bench_big_' . getmypid() . '.jsonl';
+@unlink($bigFile);
+
+// 10a. 单条追加 N 次 vs appendBatch(N) 一次原子写
+$singleMs = (static function () use ($bigFile, $big): float {
+    $store = new FileEventStore($bigFile);
+    $start = hrtime(true);
+    for ($i = 0; $i < $big; $i++) {
+        $store->append(new Event('evt.' . ($i % 50), ['i' => $i]));
+    }
+    return (hrtime(true) - $start) / 1e6;
+})();
+printf("  %-42s %10.3f ms\n", "单条 append ×{$big}", $singleMs);
+
+@unlink($bigFile);
+$batchMs = (static function () use ($bigFile, $big): float {
+    $store = new FileEventStore($bigFile);
+    $entries = [];
+    for ($i = 0; $i < $big; $i++) {
+        $entries[] = ['event' => new Event('evt.' . ($i % 50), ['i' => $i])];
+    }
+    $start = hrtime(true);
+    $store->appendBatch($entries);
+    return (hrtime(true) - $start) / 1e6;
+})();
+printf("  %-42s %10.3f ms\n", "appendBatch ×{$big}", $batchMs);
+printf("  %-42s %10.1f×\n", '批量写入提速', $singleMs > 0 ? $singleMs / $batchMs : 0);
+
+// 10b. 流式加载（O(1) 内存）vs 全量物化（all()）峰值内存对比
+$allPeakKb = (static function () use ($bigFile): float {
+    $store = new FileEventStore($bigFile);
+    $before = memory_get_peak_usage(true);
+    $store->all();
+    return (memory_get_peak_usage(true) - $before) / 1024;
+})();
+
+$streamPeakKb = (static function () use ($bigFile, $big): float {
+    $before = memory_get_peak_usage(true);
+    $store = new FileEventStore($bigFile);
+    $n = 0;
+    foreach ($store->stream() as $_) {
+        $n++;
+    }
+    $peak = (memory_get_peak_usage(true) - $before) / 1024;
+    if ($n !== $big) {
+        fwrite(STDERR, "  流式加载条数校验失败：期望 {$big}，实际 {$n}\n");
+    }
+    return $peak;
+})();
+printf("  %-42s %10.1f KB\n", "all() 全量物化峰值增量", $allPeakKb);
+printf("  %-42s %10.1f KB\n", "stream() 流式峰值增量", $streamPeakKb);
+
+$results['file_batch_single'] = ['title' => "FileEventStore 单条 append×{$big}", 'ops' => $big, 'ms' => $singleMs, 'ops_per_sec' => $singleMs > 0 ? $big / ($singleMs / 1000) : 0];
+$results['file_batch_bulk'] = ['title' => "FileEventStore appendBatch×{$big}", 'ops' => $big, 'ms' => $batchMs, 'ops_per_sec' => $batchMs > 0 ? $big / ($batchMs / 1000) : 0];
+
+@unlink($bigFile);
 
 echo "\n完成。\n";
 
