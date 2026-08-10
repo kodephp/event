@@ -6,6 +6,7 @@ namespace Kode\Event\Aop;
 
 use Kode\Event\Dispatcher;
 use Kode\Event\Event;
+use Kode\Event\ListenerRegistry;
 
 /**
  * AOP 切面事件调度器
@@ -81,32 +82,22 @@ class AspectEventDispatcher extends Dispatcher
     #[\Override]
     public function dispatch(object|string $event, array $data = []): object
     {
-        if (is_string($event)) {
-            $event = new Event($event, $data);
-        }
+        $event = is_string($event) ? new Event($event, $data) : $event;
 
-        // 切面与监听器循环仅面向 Event 对象；其它对象透传返回
+        // 事件对象（Event）先触发前置切面；若已被切面停止传播则直接返回
         if ($event instanceof Event) {
             $this->triggerBeforeAspects($event);
 
             if ($event->isPropagationStopped()) {
                 return $event;
             }
+        }
 
-            foreach ($this->registry->getListeners($event->getName()) as $item) {
-                $listener = $item['listener'];
+        // 真正的派发（递归深度保护 / 一次性监听器 / 异常策略 / 钩子 / 外部 PSR-14 提供者
+        // / 指标统计 / 链路追踪）统一委托给基类，避免切面调度器丢失这些能力
+        $event = parent::dispatch($event, $event instanceof Event ? $event->getData() : $data);
 
-                if ($listener instanceof \Kode\Event\ListenerInterface) {
-                    $listener->handle($event);
-                } else {
-                    ($listener)($event);
-                }
-
-                if ($event->isPropagationStopped()) {
-                    break;
-                }
-            }
-
+        if ($event instanceof Event) {
             $this->triggerAfterAspects($event);
         }
 
@@ -121,10 +112,6 @@ class AspectEventDispatcher extends Dispatcher
      */
     protected function triggerBeforeAspects(Event $event): void
     {
-        if (!class_exists('Kode\Aop\Runtime\JoinPoint')) {
-            return;
-        }
-
         foreach ($this->aspects as $pointcut => $aspects) {
             if ($this->matchesPointcut($event->getName(), $pointcut)) {
                 foreach ($aspects as $item) {
@@ -142,10 +129,6 @@ class AspectEventDispatcher extends Dispatcher
      */
     protected function triggerAfterAspects(Event $event): void
     {
-        if (!class_exists('Kode\Aop\Runtime\JoinPoint')) {
-            return;
-        }
-
         foreach ($this->aspects as $pointcut => $aspects) {
             if ($this->matchesPointcut($event->getName(), $pointcut)) {
                 foreach ($aspects as $item) {
@@ -158,15 +141,20 @@ class AspectEventDispatcher extends Dispatcher
     /**
      * 调用前置通知
      *
+     * 纯闭包切面仅在前置阶段执行一次；带 before()/after() 方法的对象切面分别执行对应方法。
+     *
      * @param callable|object $aspect
      * @param Event $event
      * @return void
      */
     protected function invokeBeforeAspect(callable|object $aspect, Event $event): void
     {
-        if (is_callable($aspect)) {
+        if ($aspect instanceof \Closure) {
             $aspect($event);
-        } elseif (method_exists($aspect, 'before')) {
+            return;
+        }
+
+        if (method_exists($aspect, 'before')) {
             $aspect->before($event);
         }
     }
@@ -174,21 +162,29 @@ class AspectEventDispatcher extends Dispatcher
     /**
      * 调用后置通知
      *
+     * 纯闭包切面已在前置阶段执行，此处不再重复；带 after() 方法的对象切面执行 after()。
+     *
      * @param callable|object $aspect
      * @param Event $event
      * @return void
      */
     protected function invokeAfterAspect(callable|object $aspect, Event $event): void
     {
-        if (is_callable($aspect)) {
-            $aspect($event);
-        } elseif (method_exists($aspect, 'after')) {
+        if ($aspect instanceof \Closure) {
+            return;
+        }
+
+        if (method_exists($aspect, 'after')) {
             $aspect->after($event);
         }
     }
 
     /**
      * 匹配切入点表达式
+     *
+     * `*` 匹配任意数量字符，`?` 匹配单个字符。
+     * 复用 {@see ListenerRegistry::compilePattern()} 的已验证正则实现，
+     * 避免自实现通配符（如 user.* 误编译为 /^user\.\.*$/）导致切面永不命中。
      *
      * @param string $eventName
      * @param string $pointcut
@@ -200,16 +196,7 @@ class AspectEventDispatcher extends Dispatcher
             return true;
         }
 
-        if (str_contains($pointcut, '*')) {
-            $pattern = '/^' . str_replace(
-                '*',
-                '.*',
-                preg_quote($pointcut, '/')
-            ) . '$/';
-            return (bool) preg_match($pattern, $eventName);
-        }
-
-        return $eventName === $pointcut;
+        return (bool) preg_match(ListenerRegistry::compilePattern($pointcut), $eventName);
     }
 
     /**

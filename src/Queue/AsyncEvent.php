@@ -97,7 +97,7 @@ class AsyncEvent extends Event
      */
     public function getJob(): string
     {
-        return 'Kode\Event\Queue\AsyncEvent';
+        return static::class;
     }
 
     /**
@@ -219,13 +219,30 @@ class AsyncEvent extends Event
     public static function fromPayload(array $payload): static
     {
         $data = $payload['data'] ?? [];
-        $event = new self(
-            $data['name'] ?? 'unknown',
-            $data['payload'] ?? [],
+
+        if (!is_array($data)) {
+            throw new \InvalidArgumentException('AsyncEvent payload.data 必须为数组');
+        }
+
+        $event = new static(
+            is_string($data['name'] ?? null) ? $data['name'] : 'unknown',
+            is_array($data['payload'] ?? []) ? $data['payload'] : [],
         );
-        $event->setJobId($payload['id'] ?? null);
-        $event->setQueue($payload['queue'] ?? null);
-        $event->setContext($data['context'] ?? []);
+
+        if (isset($payload['id'])) {
+            $event->setJobId((string) $payload['id']);
+        }
+
+        if (isset($payload['queue'])) {
+            $event->setQueue((string) $payload['queue']);
+        }
+
+        if (isset($data['context']) && is_array($data['context'])) {
+            $event->setContext($data['context']);
+        }
+
+        $event->setDelay((int) ($payload['delay'] ?? 0));
+
         return $event;
     }
 }

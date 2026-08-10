@@ -31,7 +31,7 @@ class EventReplay
         $end = $count === null ? count($this->events) : min($start + $count, count($this->events));
 
         for ($i = $start; $i < $end; $i++) {
-            $results[] = $this->dispatcher->dispatch($this->events[$i]['event']);
+            $results[] = $this->replayOne($this->events[$i]['event']);
         }
 
         return $results;
@@ -43,7 +43,7 @@ class EventReplay
         $events = array_slice($this->events, -$count);
 
         foreach (array_reverse($events) as $item) {
-            $results[] = $this->dispatcher->dispatch($item['event']);
+            $results[] = $this->replayOne($item['event']);
         }
 
         return $results;
@@ -53,10 +53,11 @@ class EventReplay
     {
         $results = [];
         $start = max(0, $from);
+        $total = count($this->events);
 
-        for ($i = $start; $i < count($this->events); $i++) {
+        for ($i = $start; $i < $total; $i++) {
             $event = $this->events[$i]['event'];
-            $results[] = $this->dispatcher->dispatch($event);
+            $results[] = $this->replayOne($event);
 
             if ($event->getName() === $eventName) {
                 break;
@@ -70,16 +71,31 @@ class EventReplay
     {
         $results = [];
         $start = max(0, $from);
+        $total = count($this->events);
 
-        for ($i = $start; $i < count($this->events); $i++) {
+        for ($i = $start; $i < $total; $i++) {
             $event = $this->events[$i]['event'];
 
             if ($predicate($event)) {
-                $results[] = $this->dispatcher->dispatch($event);
+                $results[] = $this->replayOne($event);
             }
         }
 
         return $results;
+    }
+
+    /**
+     * 重放单个事件
+     *
+     * 重放前对事件做「克隆 + 重置传播状态」，确保即使该事件此前已被 stopPropagation()
+     * 也能被真实派发（修复「同一 Event 实例重放为静默空操作」的问题）。
+     */
+    protected function replayOne(Event $event): Event
+    {
+        $cloned = clone $event;
+        $cloned->resumePropagation();
+
+        return $this->dispatcher->dispatch($cloned);
     }
 
     public function getRecorded(): array
@@ -145,6 +161,12 @@ class EventReplay
 
     public static function import(array $data): array
     {
-        return array_map(fn($item) => new Event($item['name'], $item['data']), $data);
+        return array_map(
+            fn($item) => new Event(
+                is_string($item['name'] ?? null) ? $item['name'] : '',
+                is_array($item['data'] ?? []) ? $item['data'] : []
+            ),
+            $data
+        );
     }
 }

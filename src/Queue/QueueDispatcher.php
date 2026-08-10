@@ -94,7 +94,8 @@ class QueueDispatcher
      */
     public function process(?string $queue = null): bool
     {
-        $job = $this->driver->pop($queue);
+        $queueName = $this->getQueueName($queue);
+        $job = $this->driver->pop($queueName);
 
         if ($job === null) {
             return false;
@@ -102,14 +103,21 @@ class QueueDispatcher
 
         $event = $this->resolveEvent($job);
 
+        // 无法反序列化的任务（毒丸）必须出队，否则会在 processMany 中无限重试
         if ($event === null) {
+            if (isset($job['id'])) {
+                $this->driver->delete($job['id'], $queueName);
+            }
             return false;
         }
 
-        $this->dispatcher->dispatch($event);
-
-        if (isset($job['id'])) {
-            $this->driver->delete($job['id'], $queue);
+        try {
+            $this->dispatcher->dispatch($event);
+        } finally {
+            // 无论监听器是否抛异常，均确保任务出队，避免毒丸任务无限重试
+            if (isset($job['id'])) {
+                $this->driver->delete($job['id'], $queueName);
+            }
         }
 
         return true;
@@ -190,11 +198,28 @@ class QueueDispatcher
      */
     protected function resolveEvent(array $job): ?Event
     {
-        if (isset($job['data']['name'])) {
-            return AsyncEvent::fromPayload($job);
+        // toPayload() 自带 {job, data:{name,payload,context}, queue, delay} 信封。
+        // 驱动通常会把它包在 data/body 字段里存储；若记录本身就是 toPayload 则直接使用。
+        $payload = $job;
+
+        if (isset($job['data']['data']['name']) && is_string($job['data']['data']['name'] ?? null)) {
+            $payload = $job['data'];
+        } elseif (isset($job['body']['data']['name']) && is_string($job['body']['data']['name'] ?? null)) {
+            $payload = $job['body'];
         }
 
-        return null;
+        if (!isset($payload['data']['name']) || !is_string($payload['data']['name'])) {
+            return null;
+        }
+
+        $event = AsyncEvent::fromPayload($payload);
+
+        // 任务 ID 由驱动在记录顶层写入，需回填到事件
+        if (isset($job['id'])) {
+            $event->setJobId((string) $job['id']);
+        }
+
+        return $event;
     }
 
     /**

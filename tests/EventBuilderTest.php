@@ -26,8 +26,8 @@ class EventBuilderTest extends TestCase
         $this->assertSame('张三', $event->get('name'));
         $this->assertSame('zhangsan@example.com', $event->get('email'));
         $this->assertSame(25, $event->get('age'));
-        $this->assertSame('trace-123', $event->get('trace_id'));
-        $this->assertSame('api', $event->get('meta.source'));
+        $this->assertSame('trace-123', $event->getTraceId());
+        $this->assertSame('api', $event->getMeta('source'));
     }
 
     public function testCanDispatchFromBuilder(): void

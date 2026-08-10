@@ -76,11 +76,11 @@ class EventBuilder
         $event = new Event($this->name, $this->data);
 
         if ($this->traceId !== null) {
-            $event->set('trace_id', $this->traceId);
+            $event->setTraceId($this->traceId);
         }
 
         foreach ($this->metadata as $key => $value) {
-            $event->set('meta.' . $key, $value);
+            $event->setMeta($key, $value);
         }
 
         return $event;

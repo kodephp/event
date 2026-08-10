@@ -2,6 +2,41 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.13.0
+- **`AspectEventDispatcher` 审计修复**：重写 `dispatch()`，把真正的派发委派给 `parent::dispatch`，
+  完整保留深度/一次性/错误策略/钩子/提供者/统计/追踪器等全部能力；非 `Event` 对象现在也能被正确派发。
+  修复切点（pointcut）通配符匹配（复用 `ListenerRegistry::compilePattern` 正则），并修复闭包切面被
+  双重调用的问题（改用 `$aspect instanceof \Closure` 精确判断）。
+- **`QueueDispatcher` 审计修复**：修复队列前缀不一致导致事件从未被消费的致命 Bug（push 用 `getQueueName`
+  前缀，pop/delete 之前未用 → 事件永远卡在队列）。修复「毒丸」：无法解析的任务（job 类不存在/不可实例化）
+  现在会被直接删除而不是永久阻塞；监听器抛出异常时通过 `try/finally` 确保任务被删除，避免重复消费。
+  `resolveEvent()` 现在能正确剥开驱动层包裹的 `{job,data,queue,delay}` 信封（兼容 `data`/`body` 两种嵌套）。
+- **`ListenerRegistry` 缓存失效修复**：注册接口/父类监听器（在已有具体类派发之后）时，现同时清除所有
+  `"\0obj\0"` 前缀的对象事件缓存，避免新增的接口/父类监听器不生效。
+- **`AsyncEvent` 序列化合身修复**：`getJob()` 此前硬编码返回字符串（导致所有异步事件被当成同一 job）；
+  `fromPayload()` 此前用 `new self`、未恢复 `delay`、空 `jobId` 直接崩溃。现已改为 `static::class`、
+  复用 `new static`、恢复 `delay`、并对 `jobId`/`queue` 做 `(string)` 兜底。
+- **`EventBuilder` 数据污染修复**：`traceId` 与 `metadata` 不再泄漏进业务 `data`（改为通过 `setTraceId` /
+  `setMeta` 写入事件元数据通道）。
+- **`Event` / `AbstractEvent` 数据正确性修复**：`fromArray()` 新增 `data` 必须为数组的健壮校验，缺失或
+  非数组直接抛 `InvalidEventException`；`toArray()` 补齐此前被丢弃的 `stop_reason`。
+- **`ImmutableEvent` 语义对齐**：`has()` 改用 `array_key_exists`（修正 null 语义），`get()` 支持 `a.b.c`
+  点路径（与 `Event` 一致）；`with` / `withData` / `withStopped` / `create` / `fromArray` 返回值由 `self`
+  改为 `static`（协变，支持子类）；新增 `toArray()`。
+- **`EventReplay` 静默空转修复**：重放一个已被 `stopPropagation` 的实例会变成无声 no-op；新增 `replayOne()`
+  在派发前 `clone` + `resumePropagation()`，并对循环次数做上限保护；`import()` 校验 `name`/`data`。
+- **`EventPipeline` 类型修复**：`dispatch()` 声明非空返回却在过滤短路时返回 null → `TypeError`；现改为
+  `?Event`，与短路边际一致。
+- **`EventSchema::validateDetailed` 修复**：同名事件的多个失败原因此前会互相覆盖，现按事件名聚合为
+  `$failures[$name][] = $reason`。
+- **`EventSchemaRegistry` 拆文件**：从 `EventSchema.php` 中拆分到独立 PSR-4 文件 `src/EventSchemaRegistry.php`，
+  解决「该类需手动类加载才能 autoload」的 PSR-4 约束违规（现 `class_exists` 即自动加载，优化 autoloader 含 1500+
+  类）。
+- **依赖**：`composer.json` 新增 `ext-mbstring`（运行时 `InvalidEventException::invalidJson` 使用 `mb_strimwidth`）。
+- **测试**：新增 `tests/HardeningTest.php`（14 项 / 32 断言）覆盖上述全部回归点；全量套件
+  **237 测试 / 553 断言全绿**。
+- 全程仅使用本机可完整测试的 PHP 8.3+ 特性；类型化类常量仍因本机构建残缺暂未加入。
+
 ## v1.12.0
 - **`DistributedEventTracer` 可自动接线到 `Dispatcher`**：新增 `Dispatcher::setTracer()` /
   `getTracer()`，注入追踪器后每次派发的 `Event` 会自动携带 W3C `traceparent`

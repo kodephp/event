@@ -505,6 +505,14 @@ class ListenerRegistry implements ListenerProviderInterface
 
         // 对象事件缓存可能包含该键（类名注册），一并失效
         unset($this->resolvedCache["\0obj\0" . $event]);
+
+        // 任意监听器注册都可能命中对象事件的「类名 / 父类 / 接口」解析路径，
+        // 统一失效所有对象缓存条目，避免「先派发、后注册接口监听器」导致监听器永久丢失
+        foreach ($this->resolvedCache as $key => $_) {
+            if (str_starts_with($key, "\0obj\0")) {
+                unset($this->resolvedCache[$key]);
+            }
+        }
     }
 
     /**

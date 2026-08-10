@@ -56,7 +56,7 @@ final class EventHelper
      */
     public static function normalizeName(string $name): string
     {
-        return strtolower(trim($name, ' \t\n\r\0\x0B.'));
+        return strtolower(trim($name, " \t\n\r\0\x0B."));
     }
 
     /**

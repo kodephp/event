@@ -75,7 +75,13 @@ abstract class AbstractEvent extends Event implements PsrStoppableEventInterface
             throw InvalidEventException::emptyName();
         }
 
-        $event = new static($payload['data'] ?? []);
+        $data = $payload['data'] ?? [];
+
+        if (!is_array($data)) {
+            throw InvalidEventException::invalidJson('事件 data 字段必须为数组');
+        }
+
+        $event = new static($data);
 
         if (!empty($payload['metadata']) && is_array($payload['metadata'])) {
             $event->metadata = $payload['metadata'];

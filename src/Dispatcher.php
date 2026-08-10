@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kode\Event;
 
 use Kode\Event\Exception\EventDispatchException;
+use Kode\Event\Exception\InvalidEventException;
 use Kode\Event\Exception\PropagationException;
 use Kode\Event\DistributedEventTracer;
 use Psr\EventDispatcher\EventDispatcherInterface as PsrEventDispatcherInterface;
@@ -213,8 +214,6 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
             throw PropagationException::maxDepthExceeded($name, $this->maxDepth);
         }
 
-        $this->attachTrace($event);
-
         $this->depth++;
         $startedAt = hrtime(true);
         $errors = [];
@@ -222,6 +221,11 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
 
         try {
             $event = $this->runPreDispatchers($event);
+
+            // 前置钩子可能替换事件对象，故在替换后再确定事件名并注入链路追踪，
+            // 否则 stats / 链路上下文会与最终派发的事件不一致
+            $name = $this->describe($event);
+            $this->attachTrace($event);
 
             if ($this->isStopped($event)) {
                 return $event;
@@ -272,7 +276,11 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     {
         $result = $this->dispatch($event, $data);
 
-        return $result instanceof Event ? $result : new Event($this->describe($result));
+        if ($result instanceof Event) {
+            return $result;
+        }
+
+        throw InvalidEventException::invalidEvent($result);
     }
 
     /**
@@ -307,14 +315,16 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
             throw PropagationException::maxDepthExceeded($name, $this->maxDepth);
         }
 
-        $this->attachTrace($event);
-
         $this->depth++;
         $startedAt = hrtime(true);
         $invoked = 0;
+        $errors = [];
 
         try {
             $event = $this->runPreDispatchers($event);
+
+            $name = $this->describe($event);
+            $this->attachTrace($event);
 
             if ($this->isStopped($event)) {
                 return null;
@@ -335,6 +345,7 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
                         throw $e;
                     }
 
+                    $errors[] = $e;
                     continue;
                 }
 
@@ -350,10 +361,14 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
 
             $this->runPostDispatchers($event);
 
+            if ($errors !== [] && $this->errorStrategy === ErrorStrategy::COLLECT) {
+                throw new EventDispatchException($name, $errors);
+            }
+
             return null;
         } finally {
             $this->depth--;
-            $this->stats?->record($name, hrtime(true) - $startedAt, $invoked, 0);
+            $this->stats?->record($name, hrtime(true) - $startedAt, $invoked, count($errors));
         }
     }
 

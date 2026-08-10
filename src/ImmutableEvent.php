@@ -50,12 +50,29 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
 
     public function get(string $key, mixed $default = null): mixed
     {
-        return $this->data[$key] ?? $default;
+        if (array_key_exists($key, $this->data)) {
+            return $this->data[$key];
+        }
+
+        if (!str_contains($key, '.')) {
+            return $default;
+        }
+
+        $value = $this->data;
+
+        foreach (explode('.', $key) as $segment) {
+            if (!is_array($value) || !array_key_exists($segment, $value)) {
+                return $default;
+            }
+            $value = $value[$segment];
+        }
+
+        return $value;
     }
 
     public function has(string $key): bool
     {
-        return isset($this->data[$key]);
+        return array_key_exists($key, $this->data);
     }
 
     #[\Override]
@@ -74,21 +91,21 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
         return hrtime(true) - $this->timestamp;
     }
 
-    public function with(string $key, mixed $value): self
+    public function with(string $key, mixed $value): static
     {
         $newData = $this->data;
         $newData[$key] = $value;
-        return new self($this->name, $newData, $this->propagationStopped, $this->timestamp);
+        return new static($this->name, $newData, $this->propagationStopped, $this->timestamp);
     }
 
-    public function withData(array $data): self
+    public function withData(array $data): static
     {
-        return new self($this->name, array_merge($this->data, $data), $this->propagationStopped, $this->timestamp);
+        return new static($this->name, array_merge($this->data, $data), $this->propagationStopped, $this->timestamp);
     }
 
-    public function withStopped(): self
+    public function withStopped(): static
     {
-        return new self($this->name, $this->data, true, $this->timestamp);
+        return new static($this->name, $this->data, true, $this->timestamp);
     }
 
     #[\Override]
@@ -108,9 +125,19 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
         return sprintf('ImmutableEvent(%s)', $this->name);
     }
 
-    public static function create(string $name, array $data = []): self
+    public static function create(string $name, array $data = []): static
     {
-        return new self($name, $data);
+        return new static($name, $data);
+    }
+
+    /**
+     * 导出为数组（与 jsonSerialize 结构一致）
+     *
+     * @return array{name: string, data: array<string, mixed>, propagation_stopped: bool, timestamp: float}
+     */
+    public function toArray(): array
+    {
+        return $this->jsonSerialize();
     }
 
     // ------------------------------------------------------------------
@@ -170,7 +197,7 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
      * @param array<string, mixed> $payload
      * @throws InvalidEventException
      */
-    public static function fromArray(array $payload): self
+    public static function fromArray(array $payload): static
     {
         $name = $payload['name'] ?? null;
 
@@ -178,9 +205,15 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
             throw InvalidEventException::emptyName();
         }
 
-        return new self(
+        $data = $payload['data'] ?? [];
+
+        if (!is_array($data)) {
+            throw InvalidEventException::invalidJson('事件 data 字段必须为数组');
+        }
+
+        return new static(
             $name,
-            $payload['data'] ?? [],
+            $data,
             !empty($payload['propagation_stopped']),
             isset($payload['timestamp']) && is_numeric($payload['timestamp'])
                 ? (float) $payload['timestamp']

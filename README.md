@@ -1007,6 +1007,11 @@ $newEvent = $event->withStopped();
 $immutable = ImmutableEvent::fromEvent($event);
 ```
 
+> **语义对齐**：`ImmutableEvent` 与 `Event` 行为一致 —— `has()` 用 `array_key_exists`
+> 精确判断键是否存在（区分「键不存在」与「值为 null」）；`get()` 支持 `a.b.c` 点路径取值；
+> `with` / `withData` / `withStopped` / `create` / `fromArray` / `fromEvent` 均返回 `static`
+> （支持子类协变）。
+
 ## 事件重放
 
 记录和重放事件序列。
@@ -1422,6 +1427,11 @@ while ($queueDispatcher->process()) {
 }
 ```
 
+> **健壮性说明**：`QueueDispatcher` 内部 push / pop / delete 统一使用 `getQueueName()` 前缀，
+> 确保入队与消费指向同一队列；消费时通过 `try/finally` 保证任务被删除，监听器抛异常也不会导致
+> 任务残留重复消费；无法解析的 job（类不存在 / 不可实例化）会被直接丢弃（毒丸隔离），
+> 不会永久阻塞队列。`AsyncEvent::getJob()` 返回 `static::class`，不同异步事件类对应不同 job。
+
 ## 协程安全
 
 ```bash
@@ -1472,6 +1482,11 @@ $dispatcher->registerAspect('user.*', function (Event $event) {
 
 $dispatcher->dispatch(new Event('user.created'));
 ```
+
+> **行为说明**：`AspectEventDispatcher` 把真正的派发委派给底层 `Dispatcher`，完整保留深度控制、
+> 一次性派发、错误策略（THROW/COLLECT/IGNORE）、钩子、外部 PSR-14 提供者、运行指标与链路追踪等
+> 全部能力；非 `Event` 对象也能被正确派发。切面 pointcut 支持通配符（`user.*`、`*` 等），
+> 闭包切面仅被调用一次（不会重复触发）。
 
 ## 依赖注入
 
@@ -1703,6 +1718,7 @@ src/
 ├── EventPriority.php              # 事件优先级枚举
 ├── EventReplay.php               # 事件重放
 ├── EventSchema.php               # 事件验证
+├── EventSchemaRegistry.php        # 事件 Schema 注册表
 ├── EventTracer.php                # 事件追踪器
 ├── ImmutableEvent.php            # 不可变事件
 ├── InterceptorRegistry.php        # 拦截器注册表

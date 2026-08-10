@@ -104,10 +104,17 @@ class EventPipeline
         return $event;
     }
 
-    public function dispatch(Dispatcher $dispatcher): Event
+    public function dispatch(Dispatcher $dispatcher): ?Event
     {
         $event = $this->execute();
-        return $event instanceof Event ? $dispatcher->dispatch($event) : $event;
+
+        if ($event === null) {
+            return null;
+        }
+
+        $result = $dispatcher->dispatch($event);
+
+        return $result instanceof Event ? $result : null;
     }
 
     public function getEvent(): Event

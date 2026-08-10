@@ -42,7 +42,7 @@ class DeferredDispatcher
 
         $this->deferred[$id] = [
             'event' => $event,
-            'dispatchAt' => $timestamp * 1_000_000_000,
+            'dispatchAt' => hrtime(true) + max(0, $timestamp - time()) * 1_000_000_000,
             'delay' => 0,
         ];
 

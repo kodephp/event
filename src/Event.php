@@ -307,14 +307,7 @@ class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppabl
      */
     public function toArray(): array
     {
-        return [
-            'name' => $this->name,
-            'data' => $this->data,
-            'metadata' => $this->metadata,
-            'trace_id' => $this->traceId,
-            'timestamp' => $this->timestamp,
-            'propagation_stopped' => $this->propagationStopped,
-        ];
+        return $this->jsonSerialize();
     }
 
     // ------------------------------------------------------------------
@@ -392,7 +385,13 @@ class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppabl
             throw InvalidEventException::emptyName();
         }
 
-        $event = new static($name, $payload['data'] ?? []);
+        $data = $payload['data'] ?? [];
+
+        if (!is_array($data)) {
+            throw InvalidEventException::invalidJson('事件 data 字段必须为数组');
+        }
+
+        $event = new static($name, $data);
 
         if (!empty($payload['metadata']) && is_array($payload['metadata'])) {
             $event->metadata = $payload['metadata'];
