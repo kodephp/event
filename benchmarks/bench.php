@@ -172,6 +172,48 @@ $results['defer_and_process'] = bench('defer + process（delay=0）', 500_000, s
 });
 
 // ------------------------------------------------------------------
+// 6b. DeferredDispatcher 超大待处理集（扫描开销）
+// ------------------------------------------------------------------
+section('6b. DeferredDispatcher 超大待处理集扫描');
+/**
+ * 构造「N 个远未来任务 + M 个立即到期任务」的待处理集，
+ * 仅计时单次 process() 的扫描开销（构造成本在计时区外）。
+ * 优化前 process() 需全量扫描 N+M；优化后从队首取到期任务、遇首个未到期即早停，
+ * 扫描量仅与 M 相关。
+ *
+ * @return array{ms:float, ops_per_sec:float}
+ */
+$measureLargePending = static function (int $total, int $due): array {
+    $dd = new DeferredDispatcher(new Dispatcher());
+    for ($i = 0; $i < $total; $i++) {
+        $dd->deferAt('def.bulk', [], time() + 1_000_000); // 远未来，不会到期
+    }
+    for ($i = 0; $i < $due; $i++) {
+        $dd->defer('def.bulk'); // 立即到期
+    }
+
+    $start = hrtime(true);
+    $dd->process();
+    $ms = (hrtime(true) - $start) / 1e6;
+
+    return ['ms' => $ms, 'ops_per_sec' => $ms > 0 ? 1000.0 / $ms : 0.0];
+};
+
+$samples = [];
+for ($i = 0; $i < 11; $i++) {
+    $samples[] = $measureLargePending(50_000, 50)['ms'];
+}
+sort($samples);
+$median = $samples[intdiv(count($samples), 2)];
+printf("  %-42s 单次 process() 中位数 %10.3f ms\n", '50000 待处理 + 50 到期', $median);
+$results['defer_large_pending'] = [
+    'title' => '50000 待处理 + 50 到期 仅 process',
+    'ops' => 1,
+    'ms' => $median,
+    'ops_per_sec' => $median > 0 ? 1000.0 / $median : 0.0,
+];
+
+// ------------------------------------------------------------------
 // 7. Event 对象构建与取数
 // ------------------------------------------------------------------
 section('7. Event 对象');

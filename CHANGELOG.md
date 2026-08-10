@@ -2,6 +2,19 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.16.0
+- **DeferredDispatcher 有序索引优化（堆结构思路）**：`process()` 此前每次对整张待处理表做 O(n) 全量扫描。
+  现改为按 `dispatchAt` 升序维护 `order` 索引，`process()` 从队首取到期任务、遇首个未到期即早停，
+  扫描量仅与到期项数量相关，与待处理集规模无关。
+  - `enqueue()` 尾部追加 O(1) 快路径：绝大多数 `defer` 的 `dispatchAt` 为当前最大，直接追加；
+    仅 `deferAt` 指定更早时间等罕见场景才从末尾向前定位插入点。
+  - `cancel()` 同步从索引移除对应 id，不影响其余任务顺序；`processAll` / `pending` / `count` / `getJob` 行为不变。
+  - 效果（PHP 8.3.33，50000 远未来 + 50 到期，单次 `process()` 中位数）：3.930 ms → 0.071 ms（≈ 55×）。
+    小用例单元素 `defer+process` 因索引维护有约 6% 微幅回落（噪声范围内，可接受）。
+- **测试**：新增 `tests/DeferredOrderTest.php`（5 项），覆盖到期顺序、cancel 不影响其余顺序、processAll、
+  大待处理集未到期不派发、deferAt 早于已有任务时前插排序；全量 253 tests / 585 assertions 通过。
+- **压测**：`benchmarks/bench.php` 新增「超大待处理集扫描」场景，量化大待处理集下 `process()` 扫描开销。
+
 ## v1.15.0
 - **审计修复（5 项缺陷）**：
   - BUG-1：`Dispatcher` 开启 `stats` 时，前置钩子抛异常不再被 `finally` 中的 `TypeError` 掩盖原始异常
