@@ -1662,6 +1662,27 @@ v1.15.0 在 v1.14.0 基础上叠加了「惰性排序 / 切面匹配缓存 / 类
   小用例（`defer + process` 单元素）因索引维护开销有约 6% 的微幅回落（1.78M → 1.67M ops/sec），
   在噪声范围内，远小于大待处理集的收益，属可接受的权衡。
 
+#### v1.17.0 新增优化点
+
+- **`DeferredDispatcher::cancel` 降为 O(1)**：v1.16.0 的 cancel 每次都 `array_search` + `array_values`
+  重建 `order` 索引（O(n)），在「大待处理集 + 频繁取消」场景下累积退化到 O(n²)。v1.17.0 改为
+  **仅 `unset` 任务本体（O(1)）**，被取消的 id 在 `order` 中仅留占位，`process()` 遍历时跳过，
+  累积的幽灵条目在下次 `process()` 中一次性压缩回收。`pending()` / `count()` / `getJob()` / `process()`
+  语义与纯 Map 实现完全一致。
+
+  效果（PHP 8.3.33，20000 待处理任务中散布取消 19900 次，每轮计时 cancel 调用本身）：
+
+  | 实现 | 取消吞吐 | 相对 |
+  | --- | --- | --- |
+  | v1.16.0（每次重建索引） | 113,811 ops/sec | 1× |
+  | v1.17.0（仅 unset 本体） | 3,939,326 ops/sec | **≈ 34.6×** |
+
+- **审计后主动放弃的通配符匹配缓存**：评估过为 `ListenerRegistry::matchWildcard` 增加 `(pattern,event)=>bool`
+  结果缓存，以规避高频事件名下的重复 `preg_match`。压测（30 通配符 + 1800 名 ×5 轮 `getListeners`）显示
+  **反而略慢**（7,305 → 6,455 ops/sec）——因为 `resolvedCache` 已拦截重复事件名，仅当 `resolvedCache`
+  被容量淘汰重算时才触及 `matchWildcard`，而缓存查询的额外开销抵消了 `preg_match` 的节省；且 pattern 内的
+  event 数组若无上限会导致内存膨胀。遵循「压测驱动、不为优化而优化」的原则，已撤销该改动。
+
 ### 性能注意事项
 
 - 同一事件名重复派发命中解析缓存（默认上限 `ListenerRegistry::MAX_CACHE_ENTRIES = 512`），

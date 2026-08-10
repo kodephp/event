@@ -86,13 +86,10 @@ class DeferredDispatcher
             return false;
         }
 
+        // 仅移除任务本体（O(1)）。order 索引中的占位由 process() 遍历时跳过，
+        // 避免大待处理集下每次 cancel 都 array_search + array_values 重建索引（退化 O(n²)）。
+        // 累积的幽灵条目会在下一次 process() 中被一次性压缩回收。
         unset($this->deferred[$id]);
-
-        $pos = array_search($id, $this->order, true);
-        if ($pos !== false) {
-            unset($this->order[$pos]);
-            $this->order = array_values($this->order);
-        }
 
         return true;
     }

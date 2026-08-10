@@ -2,6 +2,16 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.17.0
+- **DeferredDispatcher::cancel 降为 O(1)**：此前 cancel 每次 `array_search` + `array_values` 重建 `order`
+  索引（O(n)），大待处理集 + 频繁取消场景累积退化 O(n²)。现改为仅 `unset` 任务本体（O(1)），被取消 id 在
+  `order` 中仅留占位，`process()` 遍历时跳过，幽灵条目在下次 `process()` 一次性压缩回收；
+  `pending()` / `count()` / `getJob()` / `process()` 语义与纯 Map 实现完全一致。
+  - 效果（PHP 8.3.33，20000 待处理中散布取消 19900 次）：113,811 → 3,939,326 ops/sec（≈ 34.6×）。
+- 审计评估后**主动放弃**通配符匹配结果缓存：压测显示负收益（`resolvedCache` 已拦截重复事件名，缓存查询
+  开销抵消 `preg_match` 节省；且 pattern 内 event 数组内存不受控），遵循「压测驱动、不为优化而优化」原则撤销。
+- 新增压测场景 `20000 待处理 + 散布 cancel 19900 次`；全量测试 **254 tests / 602 assertions** 通过。
+
 ## v1.16.0
 - **DeferredDispatcher 有序索引优化（堆结构思路）**：`process()` 此前每次对整张待处理表做 O(n) 全量扫描。
   现改为按 `dispatchAt` 升序维护 `order` 索引，`process()` 从队首取到期任务、遇首个未到期即早停，

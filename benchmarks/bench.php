@@ -214,6 +214,28 @@ $results['defer_large_pending'] = [
 ];
 
 // ------------------------------------------------------------------
+// 6c. DeferredDispatcher 大待处理集 + 散布取消（cancel 退化场景）
+// ------------------------------------------------------------------
+section('6c. DeferredDispatcher 大待处理集 + 散布 cancel');
+// 构造 20000 个立即到期任务，对其中 19900 个做散布 cancel，仅计时 cancel 调用本身。
+// 优化前 cancel 每次 array_search + array_values 重建 O(n) 索引，累积退化 O(n²)；
+// 优化后仅 unset 任务本体 O(1)，幽灵由 process() 下次遍历时跳过。
+$results['defer_cancel_stress'] = bench('20000 待处理 + 散布 cancel 19900 次', 19_900, static function (): void {
+    static $dd = null;
+    static $ids = null;
+    static $idx = 0;
+    if ($dd === null) {
+        $dd = new DeferredDispatcher(new Dispatcher());
+        $ids = [];
+        for ($i = 0; $i < 20_000; $i++) {
+            $ids[] = $dd->defer('def.cancel.stress');
+        }
+    }
+    $dd->cancel($ids[$idx]);
+    $idx++;
+}, warmup: false);
+
+// ------------------------------------------------------------------
 // 7. Event 对象构建与取数
 // ------------------------------------------------------------------
 section('7. Event 对象');

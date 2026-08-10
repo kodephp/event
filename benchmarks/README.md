@@ -19,7 +19,7 @@ php benchmarks/bench.php --json
 
 | 文件 | 说明 |
 | --- | --- |
-| `bench.php` | 压测脚本（基准 + 通配符 + 大量不同事件名 + 批量注册 + until + 延迟 + 超大待处理集 + 对象构建） |
+| `bench.php` | 压测脚本（基准 + 通配符 + 大量不同事件名 + 批量注册 + until + 延迟 + 超大待处理集扫描 + 散布取消 + 对象构建） |
 | `benchmark-baseline-v1.13.0.json` | v1.13.0 基线数据（仓库跟踪，作为优化对比锚点） |
 | `benchmark-latest.json` | 最近一次运行结果（易变，已被 `.gitignore` 忽略） |
 
@@ -114,3 +114,33 @@ optimize 点：
 
 - `50000 待处理 + 50 到期`（`6b` 节）：构造 50000 个远未来任务 + 50 个立即到期任务，仅计时单次 `process()`，
   用于量化「大待处理集、少到期」场景的扫描开销改善。
+
+## v1.17.0 优化对比（DeferredDispatcher::cancel O(1)，PHP 8.3.33）
+
+v1.17.0 将 `DeferredDispatcher::cancel()` 从「每次 `array_search` + `array_values` 重建 `order` 索引（O(n)）」
+改为「仅 `unset` 任务本体（O(1)）」，被取消 id 在 `order` 中仅留占位，`process()` 遍历时跳过，幽灵条目在
+下次 `process()` 一次性压缩回收。新增压测场景 `20000 待处理 + 散布 cancel 19900 次`（`6c` 节），仅计时 cancel
+调用本身：
+
+| 实现 | 取消吞吐 | 相对 |
+| --- | --- | --- |
+| v1.16.0（每次重建索引 O(n)） | 113,811 ops/sec | 1× |
+| v1.17.0（仅 unset 本体 O(1)） | 3,939,326 ops/sec | **≈ 34.6×** |
+
+### v1.17.0 优化点
+
+1. `DeferredDispatcher::cancel` 降为 O(1)：消除 `order` 索引的重建开销，大待处理集 + 频繁取消场景由 O(n²)
+   退化解除；`pending()` / `count()` / `getJob()` / `process()` 语义与纯 Map 实现完全一致（已加回归测试覆盖）。
+
+### 审计后主动放弃的优化
+
+- 通配符匹配结果缓存（`(pattern,event)=>bool`）：压测显示反而略慢（30 通配符 + 1800 名 ×5 轮
+  `getListeners`：7,305 → 6,455 ops/sec）。原因：`resolvedCache` 已拦截重复事件名，仅当 `resolvedCache`
+  被容量淘汰重算时才触及 `matchWildcard`，且 pattern 内 event 数组无上限会致内存膨胀。遵循「压测驱动、
+  不为优化而优化」原则，已撤销。
+
+### v1.17.0 新增压测场景
+
+- `20000 待处理 + 散布 cancel 19900 次`（`6c` 节）：构造 20000 个立即到期任务后对其中 19900 个做散布取消，
+  仅计时 cancel 调用本身，用于量化「大待处理集 + 频繁取消」场景的退化改善。
+
