@@ -152,6 +152,17 @@ v1.19.0 为业务层特性发布，**未触及任何热路径**，因此无吞�
   `EventReplay::record`（内存 + 可选存储 append）调用；未挂载存储 / 未使用 `RetryListener` 时行为与原版完全一致。
 - 全量套件 **281 tests / 659 assertions** 通过；详见 `../CHANGELOG.md` 与 `../README.md`。
 
+## v1.20.0 复用重构（resolveEntriesForObject 收敛到 getListeners，PHP 8.3.33）
+
+v1.20.0 将对象事件 / NamedEvent 的监听器解析统一收敛到 `getListeners()`，消除对象分支中手写的「按 key 遍历通配符 + 排序」重复逻辑（方向 ③）。每个 key 的解析结果借 `resolvedCache` 单键缓存，跨派发复用；跨 key 用 `seq` 去重，外部 PSR-14 提供者在合并结果后置。新增压测场景 `8`（对象事件深层级，含类 / 父类 / 接口多键 + 通配符）：
+
+| 场景 | 改前 | 改后 | 说明 |
+| --- | --- | --- | --- |
+| 对象事件 热缓存派发 | 1,561,603 ops/sec | 1,592,981 ops/sec | 真实路径（registry 复用），持平略优 |
+| 对象事件 冷启动派发 | 306,521 ops/sec | 237,925 ops/sec | 基准每次重建 registry，生产不具代表性 |
+
+> 复用重构的首要收益是「解析逻辑单一来源」而非原始吞吐；热路径与重构前持平略优，无回归。
+
 ## v1.17.0 优化对比（DeferredDispatcher::cancel O(1)，PHP 8.3.33）
 
 v1.17.0 将 `DeferredDispatcher::cancel()` 从「每次 `array_search` + `array_values` 重建 `order` 索引（O(n)）」

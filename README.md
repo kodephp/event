@@ -1767,6 +1767,17 @@ v1.15.0 在 v1.14.0 基础上叠加了「惰性排序 / 切面匹配缓存 / 类
   | 循环 deferAt()（每次前插 O(n)，整体 O(m·n)） | 7,284 ms | 1× |
   | deferBackfill()（排序 + 单次归并 O(m·log m + n + m)） | 5.354 ms | **≈ 1360×** |
 
+### v1.20.0 优化点：resolveEntriesForObject 解析源收敛
+
+对象事件 / NamedEvent 的监听器解析统一收敛到 `getListeners()`，消除对象分支中手写的「按 key 遍历通配符 + 排序」重复逻辑（方向 ③）：
+
+- 每个 key（类名 / 父类 / 接口，或 NamedEvent 的事件名）直接复用 `getListeners($key)`，其内置的通配符正则缓存、单键排序与 `resolvedCache` 单键缓存一并生效，跨派发复用；
+- 跨 key 用 `seq` 去重（同一 entry 经多个 key 命中只触发一次），外部 PSR-14 提供者在合并结果后置；
+- **providers 存在时仍不缓存**合并结果，保留其动态增减的语义；
+- 首要收益是「解析逻辑单一来源」——后续对 `getListeners` 的修复与优化自动覆盖对象事件路径。
+
+效果（PHP 8.3.33，对象事件深层级重复派发）：热缓存路径 ≈ 1.59M ops/sec，与重构前持平略优；冷启动因基准每次重建 registry 不具生产代表性。
+
 ### 性能注意事项
 
 - 同一事件名重复派发命中解析缓存（默认上限 `ListenerRegistry::MAX_CACHE_ENTRIES = 512`），

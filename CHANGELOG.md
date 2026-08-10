@@ -2,6 +2,12 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.20.0
+- **resolveEntriesForObject 解析源收敛（方向 ③）**：对象事件 / NamedEvent 的监听器解析统一走 `getListeners()`，不再在对象分支手写「按 key 遍历通配符 + 排序」的重复逻辑；每个 key 的解析结果也借 `resolvedCache` 单键缓存，跨派发复用。
+  - 行为等价：跨 key 用 `seq` 去重、外部 PSR-14 提供者在合并结果后置、providers 存在时仍不缓存（保留动态性）。
+  - 稳健性收益：解析逻辑单一来源，后续对 `getListeners` 的修复/优化自动覆盖对象事件路径。
+  - 压测（PHP 8.3.33，对象事件热缓存路径）：≈ 1.59M ops/sec，与重构前持平略优（冷启动因基准每次重建 registry 不具生产代表性）。
+
 ## v1.19.0
 - **业务层增强：事件溯源（Event Sourcing）**：新增仅追加的事件日志抽象与实现，使事件流可持久化并重建。
   - `EventEnvelope`：不可变信封（全局序号 seq + 事件唯一 id + name/data/metadata/记录时间戳），构成事件流游标。

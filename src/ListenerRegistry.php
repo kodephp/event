@@ -273,46 +273,32 @@ class ListenerRegistry implements ListenerProviderInterface
      */
     public function resolveEntriesForObject(object $event): array
     {
-        if ($event instanceof NamedEventInterface) {
-            // 无外部提供者时直接复用已缓存的内部结果，避免重复排序
-            if ($this->providers === []) {
-                return $this->getListeners($event->getName());
-            }
+        // 统一用 getListeners() 解析对象的每个「键」：
+        // - NamedEventInterface 取事件名；
+        // - 普通对象取 类名 / 父类链 / 实现的接口（见 resolveObjectKeys）。
+        // getListeners 内部已负责通配符正则编译、单键排序与缓存，这里只做「跨键归并 + 去重」，
+        // 不再手写一遍解析逻辑（v1.20.0 复用强化：单一解析源，修复只改一处即全局生效）。
+        $keys = $event instanceof NamedEventInterface
+            ? [$event->getName()]
+            : $this->resolveObjectKeys($event);
 
-            $resolved = $this->getListeners($event->getName());
-        } else {
-            $keys = $this->resolveObjectKeys($event);
-            $cacheKey = "\0obj\0" . $keys[0];
+        $cacheKey = $event instanceof NamedEventInterface
+            ? $event->getName()
+            : "\0obj\0" . $keys[0];
 
-            // 存在外部提供者时不走缓存，避免其动态增减导致结果过期
-            if ($this->providers === [] && isset($this->resolvedCache[$cacheKey])) {
-                return $this->resolvedCache[$cacheKey];
-            }
+        // 无外部提供者时，跨键归并结果整体缓存一次（单键结果由 getListeners 各自缓存，跨派发复用）
+        if ($this->providers === [] && isset($this->resolvedCache[$cacheKey])) {
+            return $this->resolvedCache[$cacheKey];
+        }
 
-            $resolved = [];
-            $seen = [];
+        $resolved = [];
+        $seen = [];
 
-            foreach ($keys as $key) {
-                foreach ($this->listeners[$key] ?? [] as $entry) {
-                    if (!isset($seen[$entry['seq']])) {
-                        $seen[$entry['seq']] = true;
-                        $resolved[] = $entry;
-                    }
-                }
-            }
-
-            foreach ($this->wildcardListeners as $pattern => $entries) {
-                foreach ($keys as $key) {
-                    if (!$this->matchWildcard($key, $pattern)) {
-                        continue;
-                    }
-                    foreach ($entries as $entry) {
-                        if (!isset($seen[$entry['seq']])) {
-                            $seen[$entry['seq']] = true;
-                            $resolved[] = $entry;
-                        }
-                    }
-                    break;
+        foreach ($keys as $key) {
+            foreach ($this->getListeners($key) as $entry) {
+                if (!isset($seen[$entry['seq']])) {
+                    $seen[$entry['seq']] = true;
+                    $resolved[] = $entry;
                 }
             }
         }
@@ -332,11 +318,10 @@ class ListenerRegistry implements ListenerProviderInterface
 
         $this->sortBucket($resolved);
 
-            // 存在外部提供者时不缓存，避免其动态增减导致结果过期
-            if ($this->providers === []) {
-                $cacheKey = $event instanceof NamedEventInterface ? $event->getName() : "\0obj\0" . $keys[0];
-                return $this->cache($cacheKey, $resolved);
-            }
+        // 存在外部提供者时不缓存，避免其动态增减导致结果过期
+        if ($this->providers === []) {
+            return $this->cache($cacheKey, $resolved);
+        }
 
         return $resolved;
     }

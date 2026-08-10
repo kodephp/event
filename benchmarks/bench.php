@@ -324,6 +324,40 @@ $results['defer_backfill_new'] = [
     'ops_per_sec' => $medianNew > 0 ? 1000.0 / $medianNew : 0.0,
 ];
 
+// ------------------------------------------------------------------
+// 8. 对象事件（深层级）解析复用 —— resolveEntriesForObject 复用 getListeners
+// ------------------------------------------------------------------
+section('8. 对象事件（深层级）解析复用');
+
+// 构造一个具备多重解析键（自身类 + 父类 + 接口）的对象事件，并注册跨键 + 通配符监听器，
+// 用于验证 v1.20.0 把「按 key 遍历通配符 + 排序」统一收敛到 getListeners() 后，
+// 每次派发都能命中单键 resolvedCache，热路径不再重复 preg_match / 排序。
+interface BenchOrderEvent {}
+abstract class BenchOrderBase {}
+class BenchConcreteOrder extends BenchOrderBase implements BenchOrderEvent {}
+
+$results['object_dispatch_cold'] = bench('对象事件 冷启动 派发', 50_000, static function (): void {
+    $d = new Dispatcher();
+    $d->listen(BenchConcreteOrder::class, static fn() => null);
+    $d->listen(BenchOrderEvent::class, static fn() => null);
+    $d->listen(BenchOrderBase::class, static fn() => null);
+    $d->listen('BenchConcrete*', static fn() => null); // 通配符命中对象键
+    $d->dispatch(new BenchConcreteOrder());
+}, warmup: false);
+
+$results['object_dispatch_warm'] = bench('对象事件 热缓存 派发', 500_000, static function (): void {
+    static $d = null;
+    $d ??= (static function (): Dispatcher {
+        $d = new Dispatcher();
+        $d->listen(BenchConcreteOrder::class, static fn() => null);
+        $d->listen(BenchOrderEvent::class, static fn() => null);
+        $d->listen(BenchOrderBase::class, static fn() => null);
+        $d->listen('BenchConcrete*', static fn() => null);
+        return $d;
+    })();
+    $d->dispatch(new BenchConcreteOrder());
+});
+
 echo "\n完成。\n";
 
 if ($json) {
