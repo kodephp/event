@@ -10,9 +10,47 @@ class EventReplay
 
     protected int $position = 0;
 
+    /**
+     * 可选的持久化事件存储（Event Sourcing）
+     *
+     * 设置后：record() 在内存记录的同时也会 append 到存储；attach() 可把调度器
+     * 每次派发的 Event 自动入账；replayFromStore() 直接从存储重建并重放事件流。
+     */
+    protected ?EventStoreInterface $store = null;
+
     public function __construct(
         protected Dispatcher $dispatcher
     ) {
+    }
+
+    /**
+     * 挂载持久化事件存储
+     */
+    public function setStore(?EventStoreInterface $store): self
+    {
+        $this->store = $store;
+        return $this;
+    }
+
+    /**
+     * 获取已挂载的事件存储（未挂载返回 null）
+     */
+    public function getStore(): ?EventStoreInterface
+    {
+        return $this->store;
+    }
+
+    /**
+     * 绑定到调度器：每次派发的 Event 自动记入（内存 + 存储），无需手动 record()
+     */
+    public function attach(Dispatcher $dispatcher): self
+    {
+        $dispatcher->addPostDispatcher(function (object $event): void {
+            if ($event instanceof Event) {
+                $this->record($event);
+            }
+        });
+        return $this;
     }
 
     public function record(Event $event): self
@@ -21,6 +59,11 @@ class EventReplay
             'event' => $event,
             'timestamp' => hrtime(true),
         ];
+
+        if ($this->store !== null) {
+            $this->store->append($event);
+        }
+
         return $this;
     }
 
@@ -103,6 +146,42 @@ class EventReplay
     public function getRecorded(): array
     {
         return array_map(fn($item) => $item['event'], $this->events);
+    }
+
+    /**
+     * 从挂载的事件存储重建并重放事件流
+     *
+     * 将存储中的每条信封还原为 Event（恢复 name/data/metadata/时间戳），以
+     * 「克隆 + 重置传播状态」的语义重新派发，用于读模型重建或下游修复。
+     *
+     * @param int $from 起始序号（默认 1，即从最早一条开始）
+     * @param int|null $count 重放条数上限（null 表示全部）
+     * @return Event[] 重放后的事件对象
+     *
+     * @throws \RuntimeException 未挂载 EventStore 时
+     */
+    public function replayFromStore(int $from = 1, ?int $count = null): array
+    {
+        if ($this->store === null) {
+            throw new \RuntimeException('EventReplay 未挂载 EventStore，无法从存储重放');
+        }
+
+        $envelopes = $this->store->from($from);
+        if ($count !== null) {
+            $envelopes = array_slice($envelopes, 0, $count);
+        }
+
+        $results = [];
+        foreach ($envelopes as $envelope) {
+            $event = new Event($envelope->name, $envelope->data);
+            foreach ($envelope->metadata as $key => $value) {
+                $event->setMeta($key, $value);
+            }
+
+            $results[] = $this->replayOne($event);
+        }
+
+        return $results;
     }
 
     public function getEventNames(): array

@@ -764,6 +764,63 @@ $deferred->deferBackfill([
 ]);
 ```
 
+## 事件溯源（Event Sourcing）
+
+把每一次派发的事件作为不可变记录持久化到「仅追加日志」，需要时可以重放事件流来重建读模型或修复下游。
+
+```php
+use Kode\Event\EventReplay;
+use Kode\Event\FileEventStore;
+
+$dispatcher = new Dispatcher();
+$store = new FileEventStore(__DIR__ . '/events.log'); // JSON Lines，整行原子追加
+$replay = new EventReplay($dispatcher);
+$replay->setStore($store);
+
+// 挂载后，每次派发的 Event 自动入账（内存 + 文件），无需手动 record()
+$replay->attach($dispatcher);
+
+$dispatcher->listen('order.created', fn (Event $e) => /* 更新读模型 */ null);
+$dispatcher->dispatch('order.created', ['id' => 7]);
+
+// 故障恢复 / 读模型重建：从持久化日志重放（from=起始序号，count=条数上限）
+$replay->replayFromStore(from: 1);
+```
+
+`EventEnvelope` 是不可变信封（全局序号 `seq` + 事件唯一 `id` + name/data/metadata/记录时间戳），
+`seq` 即事件流游标，支持「从某序号起重放」。`EventStoreInterface` 实现可插拔：
+`InMemoryEventStore`（测试 / 单进程）与 `FileEventStore`（文件持久化，单写入者）。
+
+## 重试与死信策略（Retry / Dead-Letter）
+
+用 `RetryListener` 包裹真实监听器，失败时按次数重试并退避；重试耗尽后投递到死信接收器，
+避免单次失败中断整条监听链：
+
+```php
+use Kode\Event\CallbackDeadLetterSink;
+use Kode\Event\InMemoryDeadLetterSink;
+use Kode\Event\RetryListener;
+
+$sink = new InMemoryDeadLetterSink(); // 生产中可换 CallbackDeadLetterSink 转发到队列/库
+
+// 退避：$backoff 可为固定毫秒数，或 callable(int $attempt): int（按第几次尝试计算）
+$dispatcher->listen('order.paid', new RetryListener(
+    static function (Event $e): void {
+        // 幂等的业务处理，可能抛异常
+    },
+    'order.paid',
+    maxAttempts: 5,
+    backoff: static fn (int $attempt): int => 2 ** $attempt * 100, // 100 / 200 / 400 ...
+    deadLetter: $sink
+));
+
+// 重试耗尽：事件被投递到 $sink 并「吞掉」异常；未配置 deadLetter 则重抛，交调度器 ErrorStrategy 裁决
+```
+
+`DeadLetterSinkInterface` 提供 `InMemoryDeadLetterSink`（进程内暂存，便于排查）与
+`CallbackDeadLetterSink`（转发到任意回调，便于接入消息队列 / 数据库 / 监控），
+死信条目由 `DeadLetterEntry`（事件 + 异常 + 尝试次数 + 移入时间戳）承载。
+
 ## 事件追踪
 
 追踪事件派发的性能和时间。

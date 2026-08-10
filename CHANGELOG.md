@@ -2,6 +2,28 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.19.0
+- **业务层增强：事件溯源（Event Sourcing）**：新增仅追加的事件日志抽象与实现，使事件流可持久化并重建。
+  - `EventEnvelope`：不可变信封（全局序号 seq + 事件唯一 id + name/data/metadata/记录时间戳），构成事件流游标。
+  - `EventStoreInterface`：仅追加日志契约（`append` / `all` / `from` / `last` / `count` / `clear`），实现可插拔。
+  - `InMemoryEventStore`：进程内日志，适合测试与单进程重放。
+  - `FileEventStore`：JSON Lines 文件后端，整行原子追加（FILE_APPEND | LOCK_EX），惰性加载并跳过损坏行，
+    单写入者场景即可持久化与重建。
+  - `EventReplay` 扩展：`setStore()` 挂载存储；`attach(Dispatcher)` 把每次派发的 Event 自动入账；
+    `replayFromStore($from, $count)` 从持久化日志还原事件并重放（克隆 + 重置传播），用于读模型重建 / 下游修复。
+- **业务层增强：重试 / 死信策略（Retry / Dead-Letter）**：
+  - `DeadLetterSinkInterface`：死信接收器契约；`InMemoryDeadLetterSink`（进程内暂存）、
+    `CallbackDeadLetterSink`（转发到回调，便于接入队列 / 数据库 / 监控）。
+  - `DeadLetterEntry`：死信条目 DTO（事件 + 异常 + 尝试次数 + 移入时间戳）。
+  - `RetryListener`：实现 `ListenerInterface` 的重试装饰器，包裹任意真实监听器（callable 或 ListenerInterface），
+    按 `maxAttempts` 重试、`backoff`（固定毫秒或 `callable(int $attempt): int`）退避；重试耗尽后若注入死信接收器
+    则投递并吞掉异常（不扩散到整条监听链），否则重抛交由调度器 `ErrorStrategy` 裁决。要求监听器幂等。
+- **测试**：新增 `tests/EventSourcingTest.php`（12 项，覆盖内存/文件存储、序号、增量重放、损坏行跳过、自动入账、
+  元数据恢复）与 `tests/RetryDeadLetterTest.php`（8 项，覆盖首试成功、重试至成功、耗尽重抛、耗尽入死信、退避回调、
+  ListenerInterface 委托、参数校验、回调死信）；全量套件 **281 tests / 659 assertions** 通过。
+- 全程仅使用本机可完整测试的 PHP 8.3+ 特性；`RetryListener` 因 PHP 8.3 不支持 `callable` 作为属性类型，
+  采用无类型属性 + docblock（运行期仍是严格 callable/ListenerInterface）。
+
 ## v1.18.0
 - **DeferredDispatcher 新增 `deferBackfill()` 历史回填批量前插**：针对「事件溯源重放 / 历史补调度 /
   批量回填」等一次性插入大量 `dispatchAt` 早于现有任务的场景。此前逐个调用 `deferAt()`，每次前插都要

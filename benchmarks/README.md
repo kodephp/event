@@ -141,6 +141,17 @@ v1.18.0 新增 `DeferredDispatcher::deferBackfill()`，针对「一次性插入�
 - `历史回填批量前插`（`6d` 节）：构造 20000 个远未来任务 + 回填 20000 个历史事件，分别用循环 `deferAt`
   与 `deferBackfill` 计时插入，用于量化批量回填的退化改善。
 
+## v1.19.0 业务层增强（事件溯源 + 重试/死信，PHP 8.3.33）
+
+v1.19.0 为业务层特性发布，**未触及任何热路径**，因此无吞吐回归风险，亦无新增压测场景：
+- 事件溯源：`EventEnvelope` / `EventStoreInterface` / `InMemoryEventStore` / `FileEventStore` + `EventReplay`
+  挂载存储、自动入账与从存储重放。
+- 重试 / 死信：`RetryListener`（实现 `ListenerInterface` 的重试装饰器，按 `maxAttempts` 重试 + `backoff` 退避，
+  耗尽后投递 `DeadLetterSinkInterface` 或重抛）+ `InMemoryDeadLetterSink` / `CallbackDeadLetterSink` / `DeadLetterEntry`。
+- 性能影响：在既有 `DeferredDispatcher` 与 `Dispatcher` 之上以装饰器 / 钩子形式叠加，单次派发仅多一次
+  `EventReplay::record`（内存 + 可选存储 append）调用；未挂载存储 / 未使用 `RetryListener` 时行为与原版完全一致。
+- 全量套件 **281 tests / 659 assertions** 通过；详见 `../CHANGELOG.md` 与 `../README.md`。
+
 ## v1.17.0 优化对比（DeferredDispatcher::cancel O(1)，PHP 8.3.33）
 
 v1.17.0 将 `DeferredDispatcher::cancel()` 从「每次 `array_search` + `array_values` 重建 `order` 索引（O(n)）」
