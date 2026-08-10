@@ -53,6 +53,13 @@ class ListenerRegistry implements ListenerProviderInterface
     protected static array $regexCache = [];
 
     /**
+     * 对象事件缓存键集合（仅用于 invalidateCache 精准失效，避免全表扫描 resolvedCache）
+     *
+     * @var array<string, true>
+     */
+    protected array $objectCacheKeys = [];
+
+    /**
      * 全局自增序列号，保证同优先级监听器的稳定顺序
      */
     protected int $sequence = 0;
@@ -177,16 +184,22 @@ class ListenerRegistry implements ListenerProviderInterface
         }
 
         $resolved = $this->listeners[$event] ?? [];
+        $wildcardHit = false;
 
         foreach ($this->wildcardListeners as $pattern => $entries) {
             if ($this->matchWildcard($event, $pattern)) {
+                $wildcardHit = true;
                 foreach ($entries as $entry) {
                     $resolved[] = $entry;
                 }
             }
         }
 
-        $this->sortBucket($resolved);
+        // 精确桶在注册时已排序；仅当命中通配符（合并了不同桶）才需要重新排序，
+        // 避免缓存未命中路径上对单桶结果做无谓的 usort
+        if ($wildcardHit) {
+            $this->sortBucket($resolved);
+        }
 
         return $this->cache($event, $resolved);
     }
@@ -362,6 +375,7 @@ class ListenerRegistry implements ListenerProviderInterface
         }
 
         $this->resolvedCache = [];
+        $this->objectCacheKeys = [];
 
         return $this;
     }
@@ -467,11 +481,16 @@ class ListenerRegistry implements ListenerProviderInterface
             return;
         }
 
-        usort(
-            $bucket,
-            static fn(array $a, array $b): int => ($b['priority'] <=> $a['priority'])
-                ?: ($a['seq'] <=> $b['seq'])
-        );
+        usort($bucket, [self::class, 'compareEntries']);
+    }
+
+    /**
+     * 条目比较器（稳定排序用），从 sortBucket 提取为静态方法，
+     * 避免每次排序都重新分配闭包。
+     */
+    public static function compareEntries(array $a, array $b): int
+    {
+        return ($b['priority'] <=> $a['priority']) ?: ($a['seq'] <=> $b['seq']);
     }
 
     /**
@@ -483,10 +502,19 @@ class ListenerRegistry implements ListenerProviderInterface
     protected function cache(string $key, array $resolved): array
     {
         if (count($this->resolvedCache) >= self::MAX_CACHE_ENTRIES) {
-            array_shift($this->resolvedCache);
+            $evicted = array_key_first($this->resolvedCache);
+            unset($this->resolvedCache[$evicted]);
+            if ($evicted !== null && str_starts_with($evicted, "\0obj\0")) {
+                unset($this->objectCacheKeys[$evicted]);
+            }
         }
 
-        return $this->resolvedCache[$key] = $resolved;
+        $this->resolvedCache[$key] = $resolved;
+        if (str_starts_with($key, "\0obj\0")) {
+            $this->objectCacheKeys[$key] = true;
+        }
+
+        return $resolved;
     }
 
     /**
@@ -498,20 +526,18 @@ class ListenerRegistry implements ListenerProviderInterface
     {
         if ($event === null) {
             $this->resolvedCache = [];
+            $this->objectCacheKeys = [];
             return;
         }
 
         unset($this->resolvedCache[$event]);
 
-        // 对象事件缓存可能包含该键（类名注册），一并失效
-        unset($this->resolvedCache["\0obj\0" . $event]);
-
         // 任意监听器注册都可能命中对象事件的「类名 / 父类 / 接口」解析路径，
-        // 统一失效所有对象缓存条目，避免「先派发、后注册接口监听器」导致监听器永久丢失
-        foreach ($this->resolvedCache as $key => $_) {
-            if (str_starts_with($key, "\0obj\0")) {
-                unset($this->resolvedCache[$key]);
-            }
+        // 必须统一失效所有对象缓存条目（见 v1.13.0 C4 修复）。仅遍历对象键集合，
+        // 不再全表扫描 resolvedCache，注册量越大收益越明显。
+        foreach ($this->objectCacheKeys as $key => $_) {
+            unset($this->resolvedCache[$key]);
+            unset($this->objectCacheKeys[$key]);
         }
     }
 

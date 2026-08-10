@@ -2,6 +2,23 @@
 
 > 本文件随版本发布进入仓库，记录每个正式版本的变更摘要。
 
+## v1.14.0
+- **性能优化（压测驱动）**：新增 `benchmarks/bench.php` 压测脚本与 `benchmarks/benchmark-baseline-v1.13.0.json`
+  基线数据；在同机（PHP 8.3.33）对比验证。
+- **`ListenerRegistry::getListeners` 避免冗余排序**：精确桶在注册时已排序，仅当命中通配符
+  （需合并不同桶）才重新 `usort`；缓存未命中路径上对单桶结果不再做无谓排序。
+  「大量不同事件名（缓存未命中密集）」场景吞吐 **+85.9%**（1019 → 1894 ops/sec）。
+- **排序比较器提取为静态方法**：`sortBucket` 改用静态 `compareEntries()`，不再每次分配闭包。
+- **`invalidateCache` 精准失效对象缓存**：新增独立 `$objectCacheKeys` 集合，注册 / 注销监听器时
+  仅失效对象事件缓存条目，替代原全表扫描 `resolvedCache`；仍保留「任意注册都失效全部对象缓存」的
+  正确性语义（见 v1.13.0 C4 修复），注册量越大收益越明显（批量注册 +3.6%、注册后派发 +4.0%）。
+- **`Dispatcher::dispatch` / `until` 去重事件名计算**：移除前置钩子前的一次冗余 `describe()` 调用，
+  热路径上每个事件仅计算一次可读标识（`until` 短路 **+9.5%**、通配符派发 **+5.8%**、基础派发 **+5.7%**）。
+- **文档**：`README.md` 新增「性能压测」章节（含优化前后对比表与性能注意事项）；
+  `benchmarks/README.md` 记录运行方式与基线数据；`.gitignore` 忽略易变的 `benchmark-latest.json`。
+- **测试**：新增 `tests/PerfOptimizationTest.php`（3 项）锁定排序跳过 / 通配符合并排序 / 注册排序行为；
+  全量套件 **240 测试 / 557 断言全绿**（原 237 → 240）。
+
 ## v1.13.0
 - **`AspectEventDispatcher` 审计修复**：重写 `dispatch()`，把真正的派发委派给 `parent::dispatch`，
   完整保留深度/一次性/错误策略/钩子/提供者/统计/追踪器等全部能力；非 `Event` 对象现在也能被正确派发。

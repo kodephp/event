@@ -208,10 +208,9 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     public function dispatch(object|string $event, array $data = []): object
     {
         $event = is_string($event) ? new Event($event, $data) : $event;
-        $name = $this->describe($event);
 
         if ($this->depth >= $this->maxDepth) {
-            throw PropagationException::maxDepthExceeded($name, $this->maxDepth);
+            throw PropagationException::maxDepthExceeded($this->describe($event), $this->maxDepth);
         }
 
         $this->depth++;
@@ -309,10 +308,9 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
     public function until(object|string $event, array $data = []): mixed
     {
         $event = is_string($event) ? new Event($event, $data) : $event;
-        $name = $this->describe($event);
 
         if ($this->depth >= $this->maxDepth) {
-            throw PropagationException::maxDepthExceeded($name, $this->maxDepth);
+            throw PropagationException::maxDepthExceeded($this->describe($event), $this->maxDepth);
         }
 
         $this->depth++;

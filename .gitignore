@@ -29,3 +29,6 @@ Thumbs.db
 
 # 本地资料（仅本地，不传仓库）
 .workbuddy/
+
+# 易变的压测输出（基线保留仓库跟踪）
+benchmarks/benchmark-latest.json

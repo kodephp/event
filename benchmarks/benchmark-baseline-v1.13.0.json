@@ -1,0 +1,72 @@
+{
+    "php": "8.3.33",
+    "date": "2026-08-10T05:23:28+00:00",
+    "results": {
+        "dispatch_no_listener": {
+            "title": "dispatch(name) \u65e0\u76d1\u542c\u5668",
+            "ops": 1000000,
+            "ms": 344.264,
+            "ops_per_sec": 2904747.5193456183
+        },
+        "dispatch_one_listener": {
+            "title": "dispatch(name) +1 \u76d1\u542c\u5668",
+            "ops": 1000000,
+            "ms": 449.391667,
+            "ops_per_sec": 2225230.402414204
+        },
+        "dispatch_ten_listeners": {
+            "title": "dispatch(name) +10 \u76d1\u542c\u5668",
+            "ops": 1000000,
+            "ms": 460.260458,
+            "ops_per_sec": 2172682.8421137147
+        },
+        "dispatch_wildcard_hit": {
+            "title": "dispatch(name) \u547d\u4e2d user.* \u901a\u914d\u7b26",
+            "ops": 1000000,
+            "ms": 470.526375,
+            "ops_per_sec": 2125279.374615291
+        },
+        "dispatch_many_names": {
+            "title": "1000 \u4e2a\u4e0d\u540c\u4e8b\u4ef6\u540d\u5404\u6d3e\u53d1\u4e00\u6b21",
+            "ops": 1000,
+            "ms": 981.418458,
+            "ops_per_sec": 1018.9333528919627
+        },
+        "register_many": {
+            "title": "\u6ce8\u518c 2000 \u4e2a\u76d1\u542c\u5668",
+            "ops": 50,
+            "ms": 38.431709,
+            "ops_per_sec": 1301.0090183603336
+        },
+        "dispatch_after_register": {
+            "title": "\u6ce8\u518c 2000 \u540e\u6d3e\u53d1 1 \u6b21",
+            "ops": 200,
+            "ms": 155.558291,
+            "ops_per_sec": 1285.6916768261488
+        },
+        "until_first_wins": {
+            "title": "until() \u9996\u4e2a\u76d1\u542c\u5668\u5373\u8fd4\u56de",
+            "ops": 1000000,
+            "ms": 443.265125,
+            "ops_per_sec": 2255986.188852552
+        },
+        "defer_and_process": {
+            "title": "defer + process\uff08delay=0\uff09",
+            "ops": 500000,
+            "ms": 259.511917,
+            "ops_per_sec": 1926693.7941813287
+        },
+        "event_construct": {
+            "title": "new Event(name,data)",
+            "ops": 2000000,
+            "ms": 147.606125,
+            "ops_per_sec": 13549573.230785646
+        },
+        "event_get_dotted": {
+            "title": "Event::get(\"a.b.c\") \u70b9\u8def\u5f84",
+            "ops": 2000000,
+            "ms": 349.719792,
+            "ops_per_sec": 5718864.2042884445
+        }
+    }
+}
