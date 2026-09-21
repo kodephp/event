@@ -214,10 +214,12 @@ class ListenerRegistry implements ListenerProviderInterface
         }
 
         $resolved = $this->listeners[$event] ?? [];
-        // 精确桶在注册时仅标记 dirty，首次读取时排序一次（结果会进入 resolvedCache）
+        // 精确桶在注册时仅标记 dirty，首次读取时排序一次并回写桶本身
+        // （回写后顺序不再依赖脏标记存活，见 clear() 的按事件失效）
         if (isset($this->dirtyExact[$event]) && count($resolved) >= 2) {
             $this->sortBucket($resolved);
-            $this->dirtyExact[$event] = false;
+            $this->listeners[$event] = $resolved;
+            unset($this->dirtyExact[$event]);
         }
         $wildcardHit = false;
 
@@ -227,8 +229,8 @@ class ListenerRegistry implements ListenerProviderInterface
                 // 合并前先对脏的通配符桶排序一次
                 if (isset($this->dirtyWildcard[$pattern]) && count($entries) >= 2) {
                     $this->sortBucket($entries);
-                    $this->dirtyWildcard[$pattern] = false;
                     $this->wildcardListeners[$pattern] = $entries;
+                    unset($this->dirtyWildcard[$pattern]);
                 }
                 foreach ($entries as $entry) {
                     $resolved[] = $entry;
@@ -395,14 +397,19 @@ class ListenerRegistry implements ListenerProviderInterface
         if ($event === null) {
             $this->listeners = [];
             $this->wildcardListeners = [];
-        } else {
-            unset($this->listeners[$event], $this->wildcardListeners[$event]);
+            $this->resolvedCache = [];
+            $this->objectCacheKeys = [];
+            $this->dirtyExact = [];
+            $this->dirtyWildcard = [];
+
+            return $this;
         }
 
-        $this->resolvedCache = [];
-        $this->objectCacheKeys = [];
-        $this->dirtyExact = [];
-        $this->dirtyWildcard = [];
+        unset($this->listeners[$event], $this->wildcardListeners[$event]);
+        unset($this->dirtyExact[$event], $this->dirtyWildcard[$event]);
+
+        // 只失效与该键相关的缓存：全量清脏标记会让其它事件的未排序桶永久丢失排序机会
+        $this->invalidateCache($this->isWildcard($event) ? null : $event);
 
         return $this;
     }

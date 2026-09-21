@@ -218,10 +218,11 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
         $startedAt = $this->stats !== null ? hrtime(true) : 0;
         $errors = [];
         $invoked = 0;
-        $isStoppable = $event instanceof StoppableEventInterface || $event instanceof PsrStoppableEventInterface;
 
         try {
             $event = $this->runPreDispatchers($event);
+            // 前置钩子可能替换事件对象，可停止性必须在替换后的对象上判定
+            $isStoppable = $event instanceof StoppableEventInterface || $event instanceof PsrStoppableEventInterface;
 
             // 前置钩子可能替换事件对象，故在替换后再确定事件名并注入链路追踪，
             // 否则 stats / 链路上下文会与最终派发的事件不一致
@@ -320,10 +321,11 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
         $startedAt = $this->stats !== null ? hrtime(true) : 0;
         $invoked = 0;
         $errors = [];
-        $isStoppable = $event instanceof StoppableEventInterface || $event instanceof PsrStoppableEventInterface;
 
         try {
             $event = $this->runPreDispatchers($event);
+            // 前置钩子可能替换事件对象，可停止性必须在替换后的对象上判定
+            $isStoppable = $event instanceof StoppableEventInterface || $event instanceof PsrStoppableEventInterface;
 
             $name = $this->describe($event);
             $this->attachTrace($event);
@@ -353,6 +355,12 @@ class Dispatcher implements DispatcherInterface, PsrEventDispatcherInterface
 
                 if ($result !== null) {
                     $this->runPostDispatchers($event);
+
+                    // 短路成功不等于丢弃已收集的失败：COLLECT 策略下与 dispatch() 保持同一口径
+                    if ($errors !== [] && $this->errorStrategy === ErrorStrategy::COLLECT) {
+                        throw new EventDispatchException($name, $errors);
+                    }
+
                     return $result;
                 }
 

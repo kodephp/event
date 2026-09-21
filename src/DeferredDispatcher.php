@@ -250,13 +250,19 @@ class DeferredDispatcher
     {
         $this->deferred[$id] = $job;
 
-        if ($this->order === [] || $at >= $this->deferred[$this->order[count($this->order) - 1]]['dispatchAt']) {
+        $lastExistingAt = $this->tailDispatchAt();
+        if ($lastExistingAt === null || $at >= $lastExistingAt) {
             $this->order[] = $id;
             return;
         }
 
         $pos = 0;
         for ($j = count($this->order) - 1; $j >= 0; $j--) {
+            // cancel 留下的幽灵占位不参与定位：它终将被 process() 压缩掉
+            if (!isset($this->deferred[$this->order[$j]])) {
+                continue;
+            }
+
             if ($this->deferred[$this->order[$j]]['dispatchAt'] <= $at) {
                 $pos = $j + 1;
                 break;
@@ -265,6 +271,35 @@ class DeferredDispatcher
         }
 
         array_splice($this->order, $pos, 0, [$id]);
+    }
+
+    /**
+     * 取 order 队尾（跳过 cancel 幽灵占位）对应任务的 dispatchAt，无存活任务返回 null
+     *
+     * cancel() 只删任务本体、保留 order 占位（避免每次 O(n) 重建索引）。若队尾恰是幽灵，
+     * 直接按占位取 dispatchAt 会命中空键并以 null 参与比较，使「新任务更晚」判定恒真、
+     * 破坏升序不变量，进而让 process() 的早停在未到期任务处饿死其后已到期任务。
+     */
+    private function tailDispatchAt(): ?int
+    {
+        $last = count($this->order) - 1;
+
+        for ($j = $last; $j >= 0; $j--) {
+            $id = $this->order[$j];
+
+            if (isset($this->deferred[$id])) {
+                if ($j !== $last) {
+                    // 顺带回收队尾幽灵，避免其长期占位
+                    array_splice($this->order, $j + 1);
+                }
+
+                return $this->deferred[$id]['dispatchAt'];
+            }
+        }
+
+        $this->order = [];
+
+        return null;
     }
 
     /**
@@ -279,6 +314,14 @@ class DeferredDispatcher
      */
     private function mergeIntoOrder(array $newIds, array $newAts): void
     {
+        // 归并需按 dispatchAt 逐个解引用现有 id，先压缩 cancel 留下的幽灵占位，
+        // 否则队首/队尾判定与归并比较都会命中空键（本方法本就是 O(n)，不额外增加量级）
+        if ($this->order !== []) {
+            $this->order = array_values(
+                array_filter($this->order, fn(int $id): bool => isset($this->deferred[$id]))
+            );
+        }
+
         if ($this->order === []) {
             $this->order = $newIds;
             return;

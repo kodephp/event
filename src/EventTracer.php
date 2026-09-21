@@ -6,6 +6,9 @@ namespace Kode\Event;
 
 class EventTracer
 {
+    /** 追踪记录环形上限：常驻 worker 下防止长时间运行累积完整事件快照导致内存增长 */
+    public const int MAX_TRACES = 1000;
+
     protected array $traces = [];
 
     protected bool $enabled = true;
@@ -52,7 +55,13 @@ class EventTracer
             'stopped' => false,
         ];
 
-        $event->set('trace_id', $traceId);
+        // 环形淘汰最旧记录：每条都带完整 data 快照，常驻进程无上限即无界增长
+        if (count($this->traces) > self::MAX_TRACES) {
+            unset($this->traces[array_key_first($this->traces)]);
+        }
+
+        // 链路 id 走事件的一等字段，不写进业务 data（否则污染 getData()/队列 payload）
+        $event->setTraceId($traceId);
 
         try {
             $result = $callback();

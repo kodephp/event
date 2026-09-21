@@ -898,12 +898,18 @@ $trace['duration'];     // 纳秒
 $trace['listenerCount']; // 监听器数量
 $trace['data'];         // ['data' => 'value']
 
+// 链路 id 写在事件的一等字段上，不侵入业务 data
+$event->getTraceId();
+
 // 获取所有追踪
 $tracer->getAllTraces();
 
 // 清空追踪记录
 $tracer->clear();
 ```
+
+> 追踪记录按 `EventTracer::MAX_TRACES`（默认 1000）环形淘汰最旧条目：每条记录都带完整
+> `data` 快照，常驻 worker 无上限即无界增长。需要更长窗口可自行调大常量。
 
 ### 分布式追踪（跨进程 / 跨节点）
 
@@ -1393,6 +1399,9 @@ $dispatcher->listen('cache.resolve', fn() => 'hit');
 $value = $dispatcher->until('cache.resolve'); // 'hit'，后续监听器不会执行
 ```
 
+> `ErrorStrategy::COLLECT` 下，短路返回值不豁免已收集的监听器异常：与 `dispatch()` 同口径，
+> 遍历结束时抛 `EventDispatchException`（错误不会被静默吞掉）。
+
 ## 运行指标 DispatcherStats
 
 通过 `enableStats()` 开启后，调度器会采集每次派发的次数、耗时、监听器调用数与异常数，
@@ -1851,8 +1860,21 @@ v1.15.0 在 v1.14.0 基础上叠加了「惰性排序 / 切面匹配缓存 / 类
 
 压测（PHP 8.3.33，dispatch ×200,000）：`RetryListener` 成功路径装饰开销约 **11.4%**（裸监听 66.4ms → 包裹 73.9ms）；`exponentialBackoff` 生成 1000 次序列仅 0.06ms。
 
+### v1.24.0 修复：常驻进程下的排序失效 / 饿死 / 静默吞异常
+
+常驻多进程场景（kode 框架 11 worker 复用同一 registry / dispatcher 实例）下核实并修复：
+
+- **`ListenerRegistry::clear($event)` 越界失效**：旧实现清空全部脏标记，使其它事件未排序的监听器桶永久失去排序机会（高优先级后执行）。现仅失效该键相关标记，且惰性排序结果**回写桶本体**，顺序不再依赖标记存活。
+- **`DeferredDispatcher` cancel 幽灵占位**：`cancel()` 保留 `order` 占位（避免 O(n²) 重建）是既定设计，但 `enqueue()` / `deferBackfill()` 以队尾占位取 `dispatchAt` 会命中空键、以 `null` 参与比较，使「新任务更晚」恒真 → 升序不变量被破坏，`process()` 在未到期任务处早停、饿死其后已到期的任务。现队尾查找跳过并回收幽灵，归并前先压缩索引。
+- **`until()` 吞掉 COLLECT 异常**：短路成功即 `return`，已收集的监听器异常被静默丢弃；现与 `dispatch()` 同口径聚合抛 `EventDispatchException`。
+- **可停止性判定基准**：`dispatch()` / `until()` 旧按前置钩子**替换前**的对象判定 `isStoppable`，替换事件不可停止时会调用不存在的方法。现统一在替换后判定。
+- **`EventTracer` 链路 id 侵入业务 data**：`$event->set('trace_id', …)` 会随 `getData()` 进入 EventStore 信封与队列 payload。改写事件一等字段 `setTraceId()`，并对追踪记录加 `MAX_TRACES` 环形上限。
+
 ### 性能注意事项
 
+- **`RetryListener` 的退避是阻塞式 `usleep`**：它停在当前派发循环内，会占住整个 worker 进程。
+  常驻服务（kode 框架 / workerman）的请求路径上禁止配置 `backoff > 0`，需要延迟重试请把重试
+  投递给 `DeferredDispatcher` 或队列，而不是在监听器内睡等。
 - 同一事件名重复派发命中解析缓存（默认上限 `ListenerRegistry::MAX_CACHE_ENTRIES = 512`），
   热路径接近 O(1)；**动态生成大量不同事件名**会触发缓存未命中与重复排序/通配符匹配，
   建议复用有限的事件名或控制动态事件名规模。
