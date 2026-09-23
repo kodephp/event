@@ -2,6 +2,13 @@
 
 轻量级、解耦的事件系统，支持事件派发、监听、订阅、异步事件、协程安全，可结合 `kode/aop` 做切面事件。
 
+
+## 版本自述
+
+本包版本可由类常量核对：`Kode\Event\Dispatcher::VERSION`，或调用 `Dispatcher::version()`（当前 `1.25.0`）。
+
+`composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
+
 ## 特性
 
 - **事件派发** - 支持同步/异步事件派发
