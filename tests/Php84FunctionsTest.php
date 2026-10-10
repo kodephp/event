@@ -7,7 +7,8 @@ namespace Kode\Event\Tests;
 use PHPUnit\Framework\TestCase;
 
 /**
- * 验证 PHP 8.4 数组函数 polyfill 在 8.3 上的语义与原生 8.4 一致。
+ * 验证 PHP 8.4 数组函数的语义（8.4+ 由引擎原生提供；polyfill 文件在低于 8.4 时
+ * 提供与原生一致的实现，8.4+ 上自动让位）。
  */
 class Php84FunctionsTest extends TestCase
 {

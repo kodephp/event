@@ -229,10 +229,10 @@ class Php85AndPipelineTest extends TestCase
 
     public function testPhp85FeaturesSupportsFeature(): void
     {
-        $this->assertTrue(Php85Features::supportsFeature('enum'));
-        $this->assertTrue(Php85Features::supportsFeature('union_types'));
-        $this->assertTrue(Php85Features::supportsFeature('readonly'));
-        $this->assertTrue(Php85Features::supportsFeature('never_type'));
+        $this->assertSame(Php85Features::hasPipeOperator(), Php85Features::supportsFeature('pipe_operator'));
+        $this->assertSame(Php85Features::hasCloneWith(), Php85Features::supportsFeature('clone_with'));
+        $this->assertSame(Php85Features::hasAsymmetricVisibility(), Php85Features::supportsFeature('asymmetric_visibility'));
+        $this->assertSame(Php85Features::hasTrueType(), Php85Features::supportsFeature('true_type'));
         $this->assertFalse(Php85Features::supportsFeature('unknown_feature'));
     }
 
@@ -244,7 +244,6 @@ class Php85AndPipelineTest extends TestCase
         $this->assertArrayHasKey('php_version', $features);
         $this->assertArrayHasKey('major', $features);
         $this->assertArrayHasKey('minor', $features);
-        $this->assertArrayHasKey('enum', $features);
         $this->assertArrayHasKey('pipe_operator', $features);
         $this->assertArrayHasKey('clone_with', $features);
     }

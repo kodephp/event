@@ -110,21 +110,15 @@ final class EventHelper
     /**
      * 获取 PHP 版本特性支持信息
      *
+     * 仅保留尚未到包 floor（PHP 8.4）的 8.5 阈值条目。
+     *
      * @return array<string, bool>
      */
     public static function getPhpFeatures(): array
     {
         return [
-            'enum' => version_compare(PHP_VERSION, '8.1', '>='),
-            'union_types' => version_compare(PHP_VERSION, '8.1', '>='),
-            'never_return' => version_compare(PHP_VERSION, '8.1', '>='),
-            'readonly' => version_compare(PHP_VERSION, '8.1', '>='),
-            'true_type' => version_compare(PHP_VERSION, '8.2', '>='),
-            'dnf_types' => version_compare(PHP_VERSION, '8.2', '>='),
-            'constants_null' => version_compare(PHP_VERSION, '8.2', '>='),
             'pipe_operator' => version_compare(PHP_VERSION, '8.5', '>='),
             'clone_with' => version_compare(PHP_VERSION, '8.5', '>='),
-            'json_validate' => version_compare(PHP_VERSION, '8.3', '>='),
         ];
     }
 }

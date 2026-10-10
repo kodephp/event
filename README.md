@@ -5,7 +5,7 @@
 
 ## 版本自述
 
-本包版本可由类常量核对：`Kode\Event\Dispatcher::VERSION`，或调用 `Dispatcher::version()`（当前 `1.25.0`）。
+本包版本可由类常量核对：`Kode\Event\Dispatcher::VERSION`，或调用 `Dispatcher::version()`（当前 `3.0.0`）。
 
 `composer.json` 的 `version` 字段是 composer 侧的权威值，类常量是它的交叉核对副本——`tests/VersionGuardTest.php` 在两者不一致时直接失败，杜绝「tag 打了、常量忘改」的漂移。
 
@@ -30,7 +30,7 @@
 - **事件校验 Schema** - `EventSchema` / `EventSchemaRegistry` 声明必填字段、类型与自定义规则，支持 `explain()` 诊断
 - **组合校验谓词** - `EventPredicates::all()` / `any()` / `none()` 基于 PHP 8.4 数组函数表达复杂语义
 - **批量校验结果** - `EventSchemaRegistry::validateDetailed()` 返回只读 `ValidationResult` DTO
-- **PHP 8.4 数组函数** - 内置 `array_find` / `array_find_key` / `array_any` / `array_all` polyfill（PHP < 8.4 自动启用，8.4+ 让位原生）
+- **PHP 8.4 数组函数** - 直接使用原生 `array_find` / `array_find_key` / `array_any` / `array_all`（另附 polyfill 文件，8.4+ 上自动让位原生）
 - **PHP 8.5** - 支持新版本语言特性
 - **PHP 8.4+** - 最低运行版本要求，方法重写统一标注 `#[\Override]`
 
@@ -549,24 +549,11 @@ if ($error) {
 
 ## PHP 8.4 数组函数
 
-库内置 `array_find` / `array_find_key` / `array_any` / `array_all` 的 polyfill
-（`src/Php84Functions.php`，经 `composer.json` 的 `autoload.files` 自动加载）。
-在 PHP < 8.4 时提供与官方语义一致的实现；在 PHP >= 8.4 时由引擎原生提供，
-polyfill 通过 `function_exists` 守卫自动跳过，无需任何改动即可享受原生性能。
+本包最低运行版本为 PHP 8.4，`array_find` / `array_find_key` / `array_any` / `array_all`
+一律由引擎原生提供。另附 polyfill 文件（`src/Php84Functions.php`，经 `composer.json`
+的 `autoload.files` 自动加载），在 8.4+ 上通过 `function_exists` 守卫自动让位原生实现。
 
-```php
-use Kode\Event\Php84Features;
-
-Php84Features::hasArrayFunctions(); // PHP 8.4+ 为 true
-Php84Features::hasArrayFind();      // array_find 可用时为 true
-
-// 在 PHP 8.3 上也会自动得到 polyfill 版本
-$first = array_find([1, 2, 3], fn(int $v): bool => $v > 1); // 2
-$allPositive = array_all([-1, 2, 3], fn(int $v): bool => $v > 0); // false
-```
-
-这些函数在事件校验路径中已被直接使用：`EventSchema::validateEvent()` 用 `array_all`
-判定多规则全部通过，`EventSchemaRegistry::findFirstInvalid()` 用 `array_find` 定位首个非法事件，
+这些函数在事件校验路径中已被直接使用：`EventSchema::validateEvent()` 用 `array_all`判定多规则全部通过，`EventSchemaRegistry::findFirstInvalid()` 用 `array_find` 定位首个非法事件，
 `ValidationMiddleware` 用 `array_filter` + `array_find_key` 精确报告首个失败的校验器序号。
 
 ### 组合校验谓词
@@ -659,11 +646,10 @@ $events = EventHelper::createMany([
     'event.b' => ['data' => 2],
 ]);
 
-// 获取 PHP 特性支持
+// 获取 PHP 特性支持（仅含尚未到 floor 的 8.5 阈值条目）
 $features = EventHelper::getPhpFeatures();
-$features['enum'];       // true (PHP 8.1+)
-$features['readonly'];   // true (PHP 8.1+)
 $features['pipe_operator'];  // false (PHP 8.5+)
+$features['clone_with'];     // false (PHP 8.5+)
 ```
 
 ## 事件冒泡

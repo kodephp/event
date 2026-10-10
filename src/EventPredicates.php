@@ -7,8 +7,8 @@ namespace Kode\Event;
 /**
  * 事件谓词组合器
  *
- * 基于 PHP 8.4 数组函数（{@see array_all} / {@see array_any}，在 8.3 上由
- * {@see Php84Functions} 提供 polyfill）将多个断言组合为单一可调用谓词，
+ * 基于 PHP 8.4 数组函数（{@see array_all} / {@see array_any}）将多个断言
+ * 组合为单一可调用谓词，
  * 便于在 {@see EventSchema}、{@see ValidationMiddleware} 等场景中表达
  * 复杂的「全部满足 / 任一满足 / 全不满足」语义。
  *

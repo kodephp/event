@@ -83,14 +83,6 @@ final class Php85Features
             'asymmetric_visibility' => self::hasAsymmetricVisibility(),
             'true_type' => self::hasTrueType(),
             'json_error' => self::hasJsonError(),
-            'enum' => version_compare(PHP_VERSION, '8.1', '>='),
-            'union_types' => version_compare(PHP_VERSION, '8.0', '>='),
-            'readonly' => version_compare(PHP_VERSION, '8.1', '>='),
-            'never_type' => version_compare(PHP_VERSION, '8.1', '>='),
-            'first_class_callable' => version_compare(PHP_VERSION, '8.1', '>='),
-            'constants' => version_compare(PHP_VERSION, '8.3', '>='),
-            'typed_class_constants' => version_compare(PHP_VERSION, '8.3', '>='),
-            'impure' => version_compare(PHP_VERSION, '8.4', '>='),
             default => false,
         };
     }
@@ -107,14 +99,6 @@ final class Php85Features
             'asymmetric_visibility' => self::hasAsymmetricVisibility(),
             'true_type' => self::hasTrueType(),
             'json_error' => self::hasJsonError(),
-            'enum' => version_compare(PHP_VERSION, '8.1', '>='),
-            'union_types' => version_compare(PHP_VERSION, '8.0', '>='),
-            'readonly' => version_compare(PHP_VERSION, '8.1', '>='),
-            'never_type' => version_compare(PHP_VERSION, '8.1', '>='),
-            'first_class_callable' => version_compare(PHP_VERSION, '8.1', '>='),
-            'constants' => version_compare(PHP_VERSION, '8.3', '>='),
-            'typed_class_constants' => version_compare(PHP_VERSION, '8.3', '>='),
-            'impure' => version_compare(PHP_VERSION, '8.4', '>='),
         ];
     }
 }

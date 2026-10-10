@@ -97,7 +97,6 @@ class EventSchema
         }
 
         // 多条自定义规则统一以「全部通过」判定，底层使用 PHP 8.4 array_all
-        // （8.3 上由 Php84Functions 提供语义一致的 polyfill）
         if ($this->rules !== []) {
             return array_all($this->rules, static fn(callable $rule): bool => $rule($event));
         }

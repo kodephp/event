@@ -8,8 +8,7 @@ namespace Kode\Event;
  * 事件结构注册表
  *
  * 管理一批 {@see EventSchema}，提供按事件名校验、批量详细校验、
- * 以及基于 PHP 8.4 数组函数（array_find / array_find_key，8.3 上由
- * Php84Functions 提供 polyfill）的智能搜索能力。
+ * 以及基于 PHP 8.4 数组函数（array_find / array_find_key）的智能搜索能力。
  */
 class EventSchemaRegistry
 {
@@ -46,7 +45,7 @@ class EventSchemaRegistry
     /**
      * 返回首个未通过校验的事件（无失败则返回 null）
      *
-     * 基于 PHP 8.4 array_find（8.3 上由 Php84Functions 提供 polyfill）实现，
+     * 基于 PHP 8.4 array_find 实现，
      * 适合在批量派发前快速定位首个非法事件。
      */
     public function findFirstInvalid(Event ...$events): ?Event

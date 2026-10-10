@@ -45,8 +45,7 @@ class EventHelperTest extends TestCase
         $features = EventHelper::getPhpFeatures();
 
         $this->assertIsArray($features);
-        $this->assertArrayHasKey('enum', $features);
-        $this->assertArrayHasKey('union_types', $features);
-        $this->assertArrayHasKey('readonly', $features);
+        $this->assertArrayHasKey('pipe_operator', $features);
+        $this->assertArrayHasKey('clone_with', $features);
     }
 }
