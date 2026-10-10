@@ -32,11 +32,11 @@
 - **批量校验结果** - `EventSchemaRegistry::validateDetailed()` 返回只读 `ValidationResult` DTO
 - **PHP 8.4 数组函数** - 内置 `array_find` / `array_find_key` / `array_any` / `array_all` polyfill（PHP < 8.4 自动启用，8.4+ 让位原生）
 - **PHP 8.5** - 支持新版本语言特性
-- **PHP 8.3+** - 最低运行版本要求，方法重写统一标注 `#[\Override]`
+- **PHP 8.4+** - 最低运行版本要求，方法重写统一标注 `#[\Override]`
 
 ## 环境要求
 
-- PHP >= 8.3
+- PHP >= 8.4
 - `kode/context` ^3.1（必须）
 
 ## 安装
