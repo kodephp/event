@@ -319,6 +319,7 @@ class Event implements NamedEventInterface, StoppableEventInterface, PsrStoppabl
      *
      * @return array{name: string, data: array<string, mixed>, metadata: array<string, mixed>, trace_id: string|null, timestamp: float, propagation_stopped: bool, stop_reason: string|null}
      */
+    #[\Override]
     public function jsonSerialize(): array
     {
         return [

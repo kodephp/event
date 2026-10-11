@@ -149,6 +149,7 @@ class ImmutableEvent implements NamedEventInterface, PsrStoppableEventInterface,
      *
      * @return array{name: string, data: array<string, mixed>, propagation_stopped: bool, timestamp: float}
      */
+    #[\Override]
     public function jsonSerialize(): array
     {
         return [
