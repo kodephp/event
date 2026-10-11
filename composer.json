@@ -11,7 +11,7 @@
         "coroutine",
         "aspect-oriented"
     ],
-    "version": "3.0.2",
+    "version": "3.0.3",
     "authors": [
         {
             "name": "KodePHP Team"
@@ -25,6 +25,10 @@
     },
     "require-dev": {
         "phpunit/phpunit": "^10.0"
+    },
+    "support": {
+        "issues": "https://github.com/kodephp/event/issues",
+        "source": "https://github.com/kodephp/event"
     },
     "autoload": {
         "psr-4": {
