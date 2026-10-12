@@ -337,13 +337,7 @@ class ListenerRegistry implements ListenerProviderInterface
             return true;
         }
 
-        foreach ($this->wildcardListeners as $pattern => $entries) {
-            if ($entries !== [] && $this->matchWildcard($event, $pattern)) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($this->wildcardListeners, fn($entries, $pattern) => $entries !== [] && $this->matchWildcard($event, $pattern));
     }
 
     /**
