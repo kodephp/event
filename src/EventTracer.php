@@ -41,7 +41,10 @@ class EventTracer
             return $callback();
         }
 
-        $traceId = bin2hex(random_bytes(4));
+        // 128-bit 随机 trace ID：旧版 32-bit（8 hex）在高 QPS 常驻进程里
+        // 生日碰撞迅速成真（约 6.5 万条即 50% 概率），一次碰撞即覆盖
+        // 进行中的链路记录；标准可观测性实现也都是 16 字节。
+        $traceId = bin2hex(random_bytes(16));
         $startTime = hrtime(true);
 
         $this->traces[$traceId] = [
