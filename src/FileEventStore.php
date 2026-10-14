@@ -108,17 +108,21 @@ final class FileEventStore implements EventStoreInterface
             return;
         }
 
-        while (($line = fgets($fh)) !== false) {
-            $line = trim($line);
-            if ($line === '') {
-                continue;
+        // try/finally 保证生成器被提前 break/未消费完时也能 fclose，防止句柄泄漏
+        try {
+            while (($line = fgets($fh)) !== false) {
+                $line = trim($line);
+                if ($line === '') {
+                    continue;
+                }
+                $envelope = $this->parseLine($line);
+                if ($envelope !== null) {
+                    yield $envelope;
+                }
             }
-            $envelope = $this->parseLine($line);
-            if ($envelope !== null) {
-                yield $envelope;
-            }
+        } finally {
+            fclose($fh);
         }
-        fclose($fh);
     }
 
     #[\Override]
