@@ -20,10 +20,10 @@ readonly class ValidationResult
      * @param int $failed 未通过校验的事件数
      */
     public function __construct(
-        public bool $allValid,
+        public private(set) bool $allValid,
         public array $failures,
         public int $total,
-        public int $passed,
+        public private(set) int $passed,
         public int $failed
     ) {
     }

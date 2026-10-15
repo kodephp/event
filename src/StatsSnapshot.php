@@ -25,8 +25,8 @@ readonly class StatsSnapshot
         public int $totalDispatches,
         public int $totalErrors,
         public int $slowEvents,
-        public float $averageMs,
-        public float $totalMs,
+        public private(set) float $averageMs,
+        public private(set) float $totalMs,
         public array $metrics
     ) {
     }
