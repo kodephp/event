@@ -11,7 +11,7 @@
         "coroutine",
         "aspect-oriented"
     ],
-    "version": "3.0.7",
+    "version": "3.0.8",
     "authors": [
         {
             "name": "KodePHP Team"

@@ -85,7 +85,8 @@ class EventPipeline
         $event = $this->event;
 
         foreach ($this->pipes as $pipe) {
-            if ($this->propagationStopped) {
+            // 管道闭包可经外层捕获调用 stop()，跨方法写入静态不可见，保留运行期护栏
+            if ($this->propagationStopped) { // @phpstan-ignore if.alwaysFalse (stop() 跨方法写入)
                 return null;
             }
 

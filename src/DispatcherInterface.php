@@ -54,7 +54,7 @@ interface DispatcherInterface
     /**
      * 获取事件的所有监听器
      *
-     * @return array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}>
+     * @return array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}>
      */
     public function getListeners(string $event): array;
 

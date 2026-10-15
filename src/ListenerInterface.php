@@ -15,7 +15,7 @@ interface ListenerInterface
      * 处理事件
      *
      * @param Event $event 事件对象
-     * @return void|callable 返回 callable 表示暂停，返回 void 继续传播
+     * @return void
      */
     public function handle(Event $event): void;
 

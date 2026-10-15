@@ -14,7 +14,7 @@ readonly class ValidationResult
 {
     /**
      * @param bool $allValid 是否全部事件均通过校验
-     * @param array<string, string> $failures 失败事件名 => 失败原因
+     * @param array<string, list<string>> $failures 失败事件名 => 失败原因列表（同名事件可多条）
      * @param int $total 参与校验的事件总数
      * @param int $passed 通过校验的事件数
      * @param int $failed 未通过校验的事件数
@@ -36,7 +36,7 @@ readonly class ValidationResult
     /**
      * 导出为可序列化数组
      *
-     * @return array{all_valid: bool, total: int, passed: int, failed: int, failures: array<string, string>}
+     * @return array{all_valid: bool, total: int, passed: int, failed: int, failures: array<string, list<string>>}
      */
     public function toArray(): array
     {

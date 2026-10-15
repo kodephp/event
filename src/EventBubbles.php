@@ -65,10 +65,12 @@ class EventBubbles
                 break;
             }
             $parentEvent = Event::create($parent, $event->getData());
-            if ($event->isPropagationStopped()) {
-                $parentEvent->stopPropagation();
-            }
             $this->dispatcher->dispatch($parentEvent);
+            // 父事件处理中停止传播时，冒泡随之终止
+            if ($parentEvent->isPropagationStopped()) {
+                $event->stopPropagation();
+                break;
+            }
         }
 
         return $event;

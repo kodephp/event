@@ -37,19 +37,10 @@ final class Validator
     /**
      * 验证监听器
      *
-     * @throws ListenerException
+     * callable|ListenerInterface 已由签名在调用边界约束，方法保留供既有调用点。
      */
     public static function validateListener(callable|ListenerInterface $listener): void
     {
-        if ($listener instanceof ListenerInterface) {
-            return;
-        }
-
-        if (is_callable($listener)) {
-            return;
-        }
-
-        throw ListenerException::notCallable($listener);
     }
 
     /**

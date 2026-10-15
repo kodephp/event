@@ -25,6 +25,14 @@ final class EventHelper
      */
     public static function create(string $class, array $data = []): Event
     {
+        // Event 基类构造为 (name, data)，AbstractEvent 系为 (data)——按构造参数个数分流
+        $ctorParams = (new \ReflectionClass($class))->getConstructor()?->getNumberOfParameters() ?? 0;
+
+        if ($ctorParams >= 2) {
+            return new $class($class, $data);
+        }
+
+        // @phpstan-ignore argument.type (AbstractEvent 系构造仅收 data；按参数个数分流，静态无法关联)
         return new $class($data);
     }
 

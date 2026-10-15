@@ -27,21 +27,21 @@ class ListenerRegistry implements ListenerProviderInterface
     /**
      * 精确匹配监听器 [eventName => [entry, ...]]
      *
-     * @var array<string, array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}>>
+     * @var array<string, array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}>>
      */
     protected array $listeners = [];
 
     /**
      * 通配符监听器 [pattern => [entry, ...]]
      *
-     * @var array<string, array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}>>
+     * @var array<string, array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}>>
      */
     protected array $wildcardListeners = [];
 
     /**
      * 解析结果缓存 [eventName => [entry, ...]]
      *
-     * @var array<string, array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}>>
+     * @var array<string, array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}>>
      */
     protected array $resolvedCache = [];
 
@@ -205,7 +205,7 @@ class ListenerRegistry implements ListenerProviderInterface
     /**
      * 获取事件的所有监听器（按优先级降序、注册顺序升序）
      *
-     * @return array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}>
+     * @return array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}>
      */
     public function getListeners(string $event): array
     {
@@ -271,7 +271,7 @@ class ListenerRegistry implements ListenerProviderInterface
     /**
      * 解析事件对象对应的监听器条目
      *
-     * @return array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}>
+     * @return array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}>
      */
     public function resolveEntriesForObject(object $event): array
     {
@@ -413,7 +413,7 @@ class ListenerRegistry implements ListenerProviderInterface
      *
      * @return $this
      */
-    public function subscribe(SubscriberInterface $subscriber, DispatcherInterface $dispatcher): self
+    public function subscribe(SubscriberInterface $subscriber, Dispatcher $dispatcher): self
     {
         $subscriber->subscribe($dispatcher);
         return $this;
@@ -507,7 +507,7 @@ class ListenerRegistry implements ListenerProviderInterface
     /**
      * 稳定排序：优先级降序，同优先级按注册顺序
      *
-     * @param array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}> $bucket
+     * @param array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}> $bucket
      */
     protected function sortBucket(array &$bucket): void
     {
@@ -530,15 +530,15 @@ class ListenerRegistry implements ListenerProviderInterface
     /**
      * 写入解析缓存
      *
-     * @param array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}> $resolved
-     * @return array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool}>
+     * @param array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}> $resolved
+     * @return array<array{listener: callable|ListenerInterface, priority: int, seq: int, once: bool, event: string|null}>
      */
     protected function cache(string $key, array $resolved): array
     {
         if (count($this->resolvedCache) >= self::MAX_CACHE_ENTRIES) {
             $evicted = array_key_first($this->resolvedCache);
             unset($this->resolvedCache[$evicted]);
-            if ($evicted !== null && str_starts_with($evicted, "\0obj\0")) {
+            if (str_starts_with($evicted, "\0obj\0")) {
                 unset($this->objectCacheKeys[$evicted]);
             }
         }
@@ -585,8 +585,7 @@ class ListenerRegistry implements ListenerProviderInterface
         }
 
         if (is_array($a) && is_array($b)) {
-            return count($a) === count($b)
-                && ($a[0] ?? null) === ($b[0] ?? null)
+            return ($a[0] ?? null) === ($b[0] ?? null)
                 && ($a[1] ?? null) === ($b[1] ?? null);
         }
 

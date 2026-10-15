@@ -94,9 +94,9 @@ class DeferredDispatcher
      * - 全部早于现有任务（历史回填最常见情形）→ 纯前插（O(m)）；
      * - 其余交错情形 → 两段均有序，单次归并（O(n + m)）。
      *
-     * @param iterable<array{event: Event|string, data?: array, timestamp: int}> $entries
-     *        每个条目至少含 `event` 与整数 `timestamp`（绝对 Unix 时间戳，语义同 deferAt）；
-     *        `data` 缺省为空数组。
+     * @param iterable<array{event?: Event|string, data?: array, timestamp?: int}> $entries
+     *        每个条目应含 `event` 与整数 `timestamp`（绝对 Unix 时间戳，语义同 deferAt），
+     *        缺失时运行期抛 InvalidArgumentException；`data` 缺省为空数组。
      * @return list<int> 按派发顺序返回的本次新插入任务 id 列表
      *
      * @throws \InvalidArgumentException 条目缺少 event 或整数 timestamp 时
